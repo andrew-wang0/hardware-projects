@@ -59,6 +59,8 @@ class Config:
     camera_size: tuple[int, int]
     camera_hflip: bool
     camera_vflip: bool
+    camera_exposure_value: float
+    camera_ae_settle_seconds: float
     inky_saturation: float
     mqtt: MqttConfig
 
@@ -83,6 +85,8 @@ def load_config() -> Config:
         ),
         camera_hflip=_boolean("CAMERA_HFLIP", True),
         camera_vflip=_boolean("CAMERA_VFLIP", False),
+        camera_exposure_value=_number("CAMERA_EXPOSURE_VALUE", 0.0),
+        camera_ae_settle_seconds=_number("CAMERA_AE_SETTLE_SECONDS", 0.5),
         inky_saturation=_number("INKY_SATURATION", 0.5),
         mqtt=MqttConfig(
             host=os.getenv("MQTT_HOST"),
@@ -127,6 +131,10 @@ def load_config() -> Config:
         raise ValueError("BUTTON_BOUNCE_SECONDS cannot be negative")
     if any(value <= 0 or value % 2 for value in config.camera_size):
         raise ValueError("Camera dimensions must be positive even numbers")
+    if not -8.0 <= config.camera_exposure_value <= 8.0:
+        raise ValueError("CAMERA_EXPOSURE_VALUE must be between -8.0 and 8.0")
+    if config.camera_ae_settle_seconds < 0:
+        raise ValueError("CAMERA_AE_SETTLE_SECONDS cannot be negative")
     if not 0.0 <= config.inky_saturation <= 1.0:
         raise ValueError("INKY_SATURATION must be between 0.0 and 1.0")
     if not 1 <= config.mqtt.port <= 65_535:

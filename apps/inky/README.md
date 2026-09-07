@@ -7,7 +7,8 @@ on an Inky Impression 7.3 Spectra (800×480).
 
 1. Pressing the capture button turns on both signal LEDs and forces the big
    show light to 100% brightness (even if it was off).
-2. Releasing the same accepted press captures one photo.
+2. Releasing the same accepted press captures one photo. Auto-exposure is given
+   a short settle time under the capture light so frames are not blown out.
 3. Both signal LEDs turn off as soon as capture completes.
 4. The big light then breathes smoothly from its current brightness between
    true 0% and 100% PWM every two seconds while the photo is processed, stored,
@@ -29,21 +30,20 @@ The app has no video, preview, countdown, or graphical-desktop dependency.
 
 All GPIO values are BCM numbers.
 
-- Capture button: GPIO24 (physical pin 18) to ground (physical pin 20).
-- External signal LED: GPIO12 (physical pin 32), through a series resistor and
-  LED, to ground (physical pin 34).
-- The Pimoroni board's built-in shine-through LED uses GPIO13 and mirrors the
-  external signal LED automatically.
-- Show-light PWM: GPIO18 (physical pin 12) to the MOSFET controller input.
-- MOSFET controller signal ground: physical pin 14.
+| Function | BCM | Physical | Notes |
+| --- | --- | --- | --- |
+| Capture button | GPIO24 | 18 → GND 20 | Also Inky onboard D button |
+| External signal LED | GPIO12 | 32 → resistor + LED → GND 34 | Series resistor required |
+| Pimoroni shine-through LED | GPIO13 | on Inky board | Mirrors the external signal LED |
+| Show-light PWM | GPIO18 | 12 | To MOSFET controller input |
+| Show-light signal ground | — | 14 | MOSFET controller ground |
 
-GPIO24 is also connected to the Inky Impression's onboard D button, so either
-that button or the external button will trigger capture. Do not use GPIO16 on
-physical pin 36 as an output; Inky's onboard C button can short it to ground.
+Do not use GPIO16 on physical pin 36 as an output; Inky's onboard C button can
+short it to ground.
 
 GPIO12 also reaches the Inky board's EEPROM write-protect input. The app drives
-it explicitly and only reads the EEPROM. The external LED still requires a
-series resistor; never connect an LED directly between GPIO and ground.
+it explicitly and only reads the EEPROM. Never connect an LED directly between
+GPIO and ground.
 
 The MOSFET controller must accept 3.3 V PWM logic. Never connect the show-light
 power or load directly to a GPIO pin.
@@ -198,6 +198,8 @@ and blocks until the refresh is complete.
 - `CAMERA_HEIGHT=1296`
 - `CAMERA_HFLIP=true`
 - `CAMERA_VFLIP=false`
+- `CAMERA_EXPOSURE_VALUE=0.0` (negative darkens if shots are still too bright)
+- `CAMERA_AE_SETTLE_SECONDS=0.5` (wait after the capture light turns on)
 - `INKY_SATURATION=0.5`
 - `MQTT_HOST=homeassistant.local` (unset disables MQTT)
 - `MQTT_PORT=1883`

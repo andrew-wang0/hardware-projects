@@ -76,7 +76,7 @@ def load_config() -> Config:
         light_active_high=_boolean("LIGHT_ACTIVE_HIGH", True),
         light_brightness=_number("LIGHT_BRIGHTNESS", 1.0),
         light_pwm_frequency=_number("LIGHT_PWM_FREQUENCY", 1_000.0),
-        light_minimum_duty=_number("LIGHT_MINIMUM_DUTY", 0.20),
+        light_minimum_duty=_number("LIGHT_MINIMUM_DUTY", 0.15),
         light_transition_seconds=_number("LIGHT_TRANSITION_SECONDS", 1.0),
         button_bounce_seconds=_number("BUTTON_BOUNCE_SECONDS", 0.08),
         camera_size=(

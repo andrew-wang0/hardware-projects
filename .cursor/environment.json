@@ -1,0 +1,10 @@
+{
+  "name": "hardware-projects",
+  "install": "bash -lc 'export NVM_DIR=\"$HOME/.nvm\"; . \"$NVM_DIR/nvm.sh\"; nvm install 24.15.0; nvm alias default 24.15.0; corepack enable; pnpm install --frozen-lockfile'",
+  "terminals": [
+    {
+      "name": "cappy-messages",
+      "command": "bash -lc 'export NVM_DIR=\"$HOME/.nvm\"; . \"$NVM_DIR/nvm.sh\"; nvm use 24.15.0 > /dev/null; export PATH=\"$NVM_DIR/versions/node/v24.15.0/bin:$PATH\"; pnpm --filter cappy-messages dev'"
+    }
+  ]
+}

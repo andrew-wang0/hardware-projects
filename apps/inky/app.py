@@ -29,6 +29,8 @@ class InkyApp:
         stop_event: threading.Event,
         image_dir: Path,
         on_photo: Callable[[Path], None],
+        on_displayed: Callable[[Path], None],
+        on_display_idle: Callable[[], None],
     ) -> None:
         self._camera = camera
         self._display = display
@@ -39,12 +41,27 @@ class InkyApp:
         self._stop_event = stop_event
         self._image_dir = image_dir
         self._on_photo = on_photo
+        self._on_displayed = on_displayed
+        self._on_display_idle = on_display_idle
+        self._lock = threading.Lock()
+        self._busy = False
+        self._pending_stored_photo: Path | None = None
+
+    def queue_stored_photo(self, path: Path) -> bool:
+        with self._lock:
+            if self._busy:
+                return False
+            self._pending_stored_photo = path
+            return True
 
     def run(self) -> None:
         while not self._stop_event.is_set():
             try:
                 event = self._events.get(timeout=0.1)
             except Empty:
+                path = self._take_pending_stored_photo()
+                if path is not None:
+                    self._show_stored(path)
                 continue
 
             if event is ButtonEvent.PRESSED:
@@ -52,7 +69,21 @@ class InkyApp:
             elif event is ButtonEvent.RELEASED:
                 self._capture_and_show()
 
+    def _take_pending_stored_photo(self) -> Path | None:
+        with self._lock:
+            if self._busy:
+                return None
+            path = self._pending_stored_photo
+            if path is None:
+                return None
+            self._pending_stored_photo = None
+            self._busy = True
+            return path
+
     def _prepare_capture(self) -> None:
+        with self._lock:
+            self._busy = True
+            self._pending_stored_photo = None
         self._signal_led.on()
         self._show_light.start_capture()
         try:
@@ -63,10 +94,14 @@ class InkyApp:
             self._show_light.stop_capture()
             self._controls.set_enabled(False)
             self._discard_events()
+            self._set_idle()
             self._controls.set_enabled(True)
 
     def _capture_and_show(self) -> None:
         self._controls.set_enabled(False)
+        with self._lock:
+            self._busy = True
+            self._pending_stored_photo = None
         try:
             try:
                 image = self._camera.capture()
@@ -101,7 +136,41 @@ class InkyApp:
             self._show_light.stop_capture()
         finally:
             self._discard_events()
+            self._set_idle()
             self._controls.set_enabled(True)
+
+    def _show_stored(self, path: Path) -> None:
+        self._controls.set_enabled(False)
+        with self._lock:
+            self._busy = True
+        try:
+            self._show_light.start_busy()
+            try:
+                with Image.open(path) as image:
+                    prepared = self._display.prepare(image)
+                try:
+                    self._on_displayed(path)
+                except Exception:
+                    LOGGER.exception("Home Assistant displayed photo update failed")
+                self._display.show(prepared)
+                LOGGER.info("Displayed stored photo %s", path)
+            finally:
+                self._show_light.stop_busy()
+        except Exception:
+            LOGGER.exception("Stored photo display failed")
+            try:
+                self._on_display_idle()
+            except Exception:
+                LOGGER.exception("Home Assistant displayed photo revert failed")
+            self._show_light.stop_capture()
+        finally:
+            self._discard_events()
+            self._set_idle()
+            self._controls.set_enabled(True)
+
+    def _set_idle(self) -> None:
+        with self._lock:
+            self._busy = False
 
     def _discard_events(self) -> None:
         while True:

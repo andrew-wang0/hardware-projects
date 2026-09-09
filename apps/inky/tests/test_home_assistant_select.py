@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import MagicMock
+
+
+for name in (
+    "gpiozero",
+    "gpiozero.pins.lgpio",
+    "inky",
+    "inky.auto",
+    "picamera2",
+    "libcamera",
+    "paho",
+    "paho.mqtt",
+    "paho.mqtt.client",
+):
+    sys.modules.setdefault(name, MagicMock())
+
+sys.modules["paho.mqtt.client"].MQTT_ERR_SUCCESS = 0
+sys.modules["paho.mqtt.client"].CallbackAPIVersion.VERSION2 = 2
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from config import Config, MqttConfig
+from home_assistant import HomeAssistant
+from photos import photo_label, save_displayed
+
+import home_assistant as home_assistant_module
+
+if home_assistant_module.mqtt is not None:
+    home_assistant_module.mqtt.MQTT_ERR_SUCCESS = 0
+
+
+class FakeLight:
+    def set(self, **_kwargs) -> None:
+        return None
+
+    def state(self) -> tuple[bool, float]:
+        return False, 0.0
+
+
+class FakeMQTTResult:
+    rc = 0
+
+    def wait_for_publish(self, timeout: float = 0) -> None:
+        return None
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.published: list[tuple[str, object, int, bool]] = []
+        self.subscribed: list[str] = []
+
+    def publish(self, topic, payload=None, qos=0, retain=False):
+        self.published.append((topic, payload, qos, retain))
+        return FakeMQTTResult()
+
+    def subscribe(self, topic, qos=0):
+        self.subscribed.append(topic)
+
+    def username_pw_set(self, *_args, **_kwargs) -> None:
+        return None
+
+    def will_set(self, *_args, **_kwargs) -> None:
+        return None
+
+    def reconnect_delay_set(self, **_kwargs) -> None:
+        return None
+
+    def connect_async(self, *_args, **_kwargs) -> None:
+        return None
+
+    def loop_start(self) -> None:
+        return None
+
+    def loop_stop(self) -> None:
+        return None
+
+    def disconnect(self) -> None:
+        return None
+
+
+def make_config(image_dir: Path, limit: int = 100) -> Config:
+    return Config(
+        image_dir=image_dir,
+        capture_button_pin=24,
+        signal_led_pin=12,
+        signal_led_active_high=True,
+        light_pwm_pin=18,
+        light_active_high=True,
+        light_brightness=1.0,
+        light_pwm_frequency=1_000.0,
+        light_minimum_duty=0.20,
+        light_transition_seconds=1.0,
+        button_bounce_seconds=0.08,
+        camera_size=(2304, 1296),
+        camera_hflip=True,
+        camera_vflip=False,
+        camera_exposure_value=0.0,
+        camera_ae_settle_seconds=0.5,
+        inky_saturation=0.5,
+        photo_select_limit=limit,
+        mqtt=MqttConfig(
+            host="mqtt.local",
+            port=1883,
+            username="inky",
+            password="secret",
+            device_id="inky",
+            topic_prefix="inky",
+            discovery_prefix="homeassistant",
+        ),
+    )
+
+
+class HomeAssistantSelectTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.image_dir = Path(self._temp.name)
+        self.older = self.image_dir / "1700000000.png"
+        self.newer = self.image_dir / "1800000000.png"
+        self.older.write_bytes(b"old")
+        self.newer.write_bytes(b"new")
+        os.utime(self.older, (1, 1))
+        os.utime(self.newer, (2, 2))
+        self.client = FakeClient()
+        self.ha = HomeAssistant(make_config(self.image_dir), FakeLight())
+        self.ha._client = self.client
+        self.queued: list[Path] = []
+        self.ha.set_display_handler(self._queue)
+        self.ha._on_connect(self.client, None, None, 0, None)
+
+    def tearDown(self) -> None:
+        self._temp.cleanup()
+
+    def _queue(self, path: Path) -> bool:
+        self.queued.append(path)
+        return True
+
+    def _payloads(self, topic: str) -> list[object]:
+        return [payload for published, payload, _qos, _retain in self.client.published if published == topic]
+
+    def test_discovery_lists_stored_photos(self) -> None:
+        configs = self._payloads("homeassistant/select/inky/displayed_photo/config")
+        self.assertTrue(configs)
+        payload = json.loads(configs[-1])
+        self.assertEqual(payload["name"], "Displayed Photo")
+        self.assertEqual(payload["command_topic"], "inky/photo/select")
+        self.assertEqual(
+            payload["options"],
+            [photo_label(self.newer), photo_label(self.older)],
+        )
+        self.assertIn("inky/photo/select", self.client.subscribed)
+
+    def test_select_command_queues_stored_photo(self) -> None:
+        self.ha._handle_select_command(photo_label(self.older).encode())
+
+        self.assertEqual(self.queued, [self.older])
+
+    def test_select_command_accepts_filename(self) -> None:
+        self.ha._handle_select_command(b"1700000000.png")
+
+        self.assertEqual(self.queued, [self.older])
+
+    def test_busy_selection_is_ignored(self) -> None:
+        self.ha.set_display_handler(lambda _path: False)
+        self.ha._handle_select_command(photo_label(self.older).encode())
+
+        self.assertEqual(self.queued, [])
+        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
+
+    def test_invalid_selection_is_ignored(self) -> None:
+        self.ha._handle_select_command(b"../secret.png")
+
+        self.assertEqual(self.queued, [])
+
+    def test_current_photo_is_a_noop(self) -> None:
+        save_displayed(self.image_dir, self.newer)
+        self.ha._displayed = self.newer
+        self.ha._handle_select_command(photo_label(self.newer).encode())
+
+        self.assertEqual(self.queued, [])
+
+    def test_reconnect_republishes_the_displayed_photo(self) -> None:
+        save_displayed(self.image_dir, self.older)
+        self.client.published.clear()
+        self.ha._on_connect(self.client, None, None, 0, None)
+
+        self.assertEqual(self._payloads("inky/photo")[-1], b"old")
+        self.assertEqual(
+            self._payloads("inky/photo/displayed")[-1],
+            photo_label(self.older),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

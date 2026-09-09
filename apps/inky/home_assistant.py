@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
 from pathlib import Path
@@ -12,6 +13,13 @@ except ImportError:
 
 from config import Config, MqttConfig
 from hardware import ShowLight
+from photos import (
+    PhotoChoice,
+    load_displayed,
+    photo_choices,
+    resolve_photo_choice,
+    save_displayed,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -25,6 +33,10 @@ class HomeAssistant:
         self._connected = False
         self._client = None
         self._last_connect_warning = 0.0
+        self._on_show_photo: Callable[[Path], bool] | None = None
+        self._displayed: Path | None = load_displayed(config.image_dir)
+        self._choices: list[PhotoChoice] = []
+        self._published_options: list[str] | None = None
 
         if not self._mqtt.host:
             return
@@ -49,6 +61,9 @@ class HomeAssistant:
         except Exception:
             LOGGER.exception("MQTT setup failed; continuing without Home Assistant")
 
+    def set_display_handler(self, on_show_photo: Callable[[Path], bool]) -> None:
+        self._on_show_photo = on_show_photo
+
     def start(self) -> None:
         if self._client is None:
             if not self._mqtt.host:
@@ -65,29 +80,25 @@ class HomeAssistant:
             self._client = None
 
     def publish_photo(self, path: Path, *, announce: bool = True) -> None:
-        if not self._connected or self._client is None or mqtt is None:
-            return
+        self._publish_photo_bytes(path)
+        if announce:
+            self._publish_capture_event(path)
+        self.set_displayed(path)
+
+    def set_displayed(self, path: Path) -> None:
+        self._displayed = path
         try:
-            photo = self._client.publish(
-                self._topic("photo"),
-                path.read_bytes(),
-                qos=1,
-                retain=True,
-            )
-            if photo.rc != mqtt.MQTT_ERR_SUCCESS:
-                LOGGER.warning("Could not update the latest Home Assistant photo")
-                return
-            if announce:
-                capture = self._client.publish(
-                    self._topic("photo/captured"),
-                    path.name,
-                    qos=1,
-                    retain=False,
-                )
-                if capture.rc != mqtt.MQTT_ERR_SUCCESS:
-                    LOGGER.warning("Could not publish the Inky capture event")
-        except (OSError, RuntimeError, ValueError):
-            LOGGER.warning("Could not publish photo to Home Assistant")
+            save_displayed(self._config.image_dir, path)
+        except OSError:
+            LOGGER.warning("Could not persist the displayed photo")
+        self._refresh_select()
+
+    def show_stored_photo(self, path: Path) -> None:
+        self._publish_photo_bytes(path)
+        self.set_displayed(path)
+
+    def publish_displayed_state(self) -> None:
+        self._publish_displayed_state()
 
     def close(self) -> None:
         if self._client is None:
@@ -116,10 +127,13 @@ class HomeAssistant:
 
         self._connected = True
         client.subscribe(self._topic("light/set"), qos=1)
+        client.subscribe(self._topic("photo/select"), qos=1)
+        self._displayed = load_displayed(self._config.image_dir)
+        self._published_options = None
         self._publish_discovery()
         client.publish(self._topic("status"), "online", qos=1, retain=True)
         self._publish_light_state()
-        self._publish_latest_stored_photo()
+        self._publish_current_photo()
         LOGGER.info("Connected to Home Assistant MQTT at %s", self._mqtt.host)
 
     def _on_connect_fail(self, _client, _userdata) -> None:
@@ -143,6 +157,8 @@ class HomeAssistant:
     def _on_message(self, _client, _userdata, message) -> None:
         if message.topic == self._topic("light/set"):
             self._handle_light_command(message.payload)
+        elif message.topic == self._topic("photo/select"):
+            self._handle_select_command(message.payload)
 
     def _handle_light_command(self, payload: bytes) -> None:
         try:
@@ -170,6 +186,23 @@ class HomeAssistant:
             self._publish_light_state()
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             LOGGER.warning("Ignored invalid MQTT light command: %s", error)
+
+    def _handle_select_command(self, payload: bytes) -> None:
+        try:
+            option = payload.decode("utf-8").strip()
+            path = resolve_photo_choice(option, self._choices, self._config.image_dir)
+        except (UnicodeDecodeError, ValueError) as error:
+            LOGGER.warning("Ignored invalid displayed photo command: %s", error)
+            self._publish_displayed_state()
+            return
+
+        if self._displayed is not None and path == self._displayed:
+            self._publish_displayed_state()
+            return
+        if self._on_show_photo is None or not self._on_show_photo(path):
+            LOGGER.info("Ignored photo selection while Inky is busy")
+            self._publish_displayed_state()
+            return
 
     def _publish_discovery(self) -> None:
         assert self._client is not None
@@ -209,6 +242,7 @@ class HomeAssistant:
         }
         self._publish_config("light", "light", light)
         self._publish_config("image", "latest_photo", image)
+        self._refresh_select()
         # Clear obsolete retained discovery from earlier designs.
         for component, entity in (
             ("light", "show_light"),
@@ -228,6 +262,41 @@ class HomeAssistant:
             "display/status",
         ):
             self._client.publish(self._topic(suffix), None, qos=1, retain=True)
+
+    def _refresh_select(self) -> None:
+        self._choices = photo_choices(
+            self._config.image_dir,
+            self._config.photo_select_limit,
+            include=self._displayed,
+        )
+        if not self._connected or self._client is None:
+            return
+        options = [choice.label for choice in self._choices]
+        if options != self._published_options:
+            self._published_options = options
+            self._publish_config("select", "displayed_photo", self._select_config())
+        self._publish_displayed_state()
+
+    def _select_config(self) -> dict:
+        return {
+            "name": "Displayed Photo",
+            "default_entity_id": f"select.{self._mqtt.device_id}_displayed_photo",
+            "unique_id": f"{self._mqtt.device_id}_displayed_photo",
+            "command_topic": self._topic("photo/select"),
+            "state_topic": self._topic("photo/displayed"),
+            "json_attributes_topic": self._topic("photo/displayed_attrs"),
+            "options": [choice.label for choice in self._choices],
+            "icon": "mdi:image-album",
+            "device": {
+                "identifiers": [self._mqtt.device_id],
+                "name": "Inky",
+                "manufacturer": "Custom",
+                "model": "Inky Impression 7.3",
+            },
+            "availability_topic": self._topic("status"),
+            "payload_available": "online",
+            "payload_not_available": "offline",
+        }
 
     def _publish_config(self, component: str, entity: str, payload: dict) -> None:
         assert self._client is not None
@@ -253,15 +322,75 @@ class HomeAssistant:
             retain=True,
         )
 
-    def _publish_latest_stored_photo(self) -> None:
-        try:
-            latest = max(
-                self._config.image_dir.glob("*.png"),
-                key=lambda path: path.stat().st_mtime_ns,
-            )
-        except (OSError, ValueError):
+    def _publish_displayed_state(self) -> None:
+        if self._client is None:
             return
-        self.publish_photo(latest, announce=False)
+        label = ""
+        attrs: dict[str, str] = {}
+        if self._displayed is not None:
+            for choice in self._choices:
+                if choice.path == self._displayed:
+                    label = choice.label
+                    attrs = {"filename": choice.path.name}
+                    break
+        self._client.publish(
+            self._topic("photo/displayed"),
+            label if label else "None",
+            qos=1,
+            retain=True,
+        )
+        self._client.publish(
+            self._topic("photo/displayed_attrs"),
+            json.dumps(attrs),
+            qos=1,
+            retain=True,
+        )
+
+    def _publish_current_photo(self) -> None:
+        path = self._displayed
+        if path is None or not path.is_file():
+            try:
+                path = max(
+                    (
+                        candidate
+                        for candidate in self._config.image_dir.glob("*.png")
+                        if candidate.is_file() and not candidate.name.startswith(".")
+                    ),
+                    key=lambda candidate: candidate.stat().st_mtime_ns,
+                )
+            except (OSError, ValueError):
+                return
+        self._publish_photo_bytes(path)
+
+    def _publish_photo_bytes(self, path: Path) -> None:
+        if not self._connected or self._client is None or mqtt is None:
+            return
+        try:
+            photo = self._client.publish(
+                self._topic("photo"),
+                path.read_bytes(),
+                qos=1,
+                retain=True,
+            )
+            if photo.rc != mqtt.MQTT_ERR_SUCCESS:
+                LOGGER.warning("Could not update the latest Home Assistant photo")
+        except (OSError, RuntimeError, ValueError):
+            LOGGER.warning("Could not publish photo to Home Assistant")
+
+    def _publish_capture_event(self, path: Path) -> None:
+        if not self._connected or self._client is None or mqtt is None:
+            return
+        try:
+            capture = self._client.publish(
+                self._topic("photo/captured"),
+                path.name,
+                qos=1,
+                retain=False,
+            )
+            if capture.rc != mqtt.MQTT_ERR_SUCCESS:
+                LOGGER.warning("Could not publish the Inky capture event")
+        except (RuntimeError, ValueError):
+            LOGGER.warning("Could not publish the Inky capture event")
 
     def _topic(self, suffix: str) -> str:
         return f"{self._mqtt.topic_prefix}/{suffix}"

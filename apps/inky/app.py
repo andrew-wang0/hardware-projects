@@ -45,11 +45,12 @@ class InkyApp:
         self._on_display_idle = on_display_idle
         self._lock = threading.Lock()
         self._busy = False
+        self._capturing = False
         self._pending_stored_photo: Path | None = None
 
     def queue_stored_photo(self, path: Path) -> bool:
         with self._lock:
-            if self._busy:
+            if self._capturing:
                 return False
             self._pending_stored_photo = path
             return True
@@ -83,6 +84,7 @@ class InkyApp:
     def _prepare_capture(self) -> None:
         with self._lock:
             self._busy = True
+            self._capturing = True
             self._pending_stored_photo = None
         self._signal_led.on()
         self._show_light.start_capture()
@@ -101,6 +103,7 @@ class InkyApp:
         self._controls.set_enabled(False)
         with self._lock:
             self._busy = True
+            self._capturing = True
             self._pending_stored_photo = None
         try:
             try:
@@ -171,6 +174,7 @@ class InkyApp:
     def _set_idle(self) -> None:
         with self._lock:
             self._busy = False
+            self._capturing = False
 
     def _discard_events(self) -> None:
         while True:

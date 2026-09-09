@@ -53,6 +53,8 @@ class InkyAppStoredPhotoTests(unittest.TestCase):
         self.assertTrue(self.app.queue_stored_photo(self.path))
         self.assertEqual(self.app._take_pending_stored_photo(), self.path)
         self.assertTrue(self.app._busy)
+        self.assertTrue(self.app.queue_stored_photo(self.path))
+        self.app._capturing = True
         self.assertFalse(self.app.queue_stored_photo(self.path))
 
     def test_prepare_capture_cancels_pending_selection(self) -> None:

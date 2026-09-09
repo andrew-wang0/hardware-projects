@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from photos import (
     load_displayed,
+    neighbor_photo,
     photo_choices,
     photo_label,
     resolve_photo_choice,
@@ -106,6 +107,15 @@ class PhotoLibraryTests(unittest.TestCase):
 
         labels = {choice.label for choice in choices}
         self.assertEqual(labels, {"same · a.png", "same · b.png"})
+
+    def test_steps_to_neighbor_photos(self) -> None:
+        older = write_photo(self.image_dir, "1700000000.png", mtime=1)
+        newer = write_photo(self.image_dir, "1800000000.png", mtime=2)
+        choices = photo_choices(self.image_dir, limit=10)
+
+        self.assertEqual(neighbor_photo(choices, newer, 1), older)
+        self.assertEqual(neighbor_photo(choices, older, -1), newer)
+        self.assertEqual(neighbor_photo(choices, newer, -1), older)
 
 
 if __name__ == "__main__":

@@ -16,14 +16,14 @@ on an Inky Impression 7.3 Spectra (800×480).
 5. The big light fades back to its latest Home Assistant setting (true 0% PWM
    when that setting is off).
 
-Home Assistant can also show a previously taken photo stored on Inky. The
-Inky device has **Displayed Photo**, a timestamp dropdown of stored shots
-(newest first). Choosing one shows it on the e-paper. That path skips the
-camera, but still uses the busy breathing light and ignores the capture
-button until the refresh finishes.
+Home Assistant can also show a previously taken photo stored on Inky. **Current
+Photo** is the picture of whatever is on the panel. **Stored Photos** is a
+timestamp dropdown of older shots (newest first). Choosing one shows it on the
+e-paper. That path skips the camera, but still uses the busy breathing light
+and ignores the capture button until the refresh finishes.
 
-**Displayed Photo** becomes unavailable for the whole capture or e-paper
-refresh. **Current Photo** still shows whatever is on the panel.
+**Stored Photos** becomes unavailable for the whole capture or e-paper refresh.
+**Current Photo** still shows whatever is on the panel.
 
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
@@ -97,12 +97,13 @@ device **Inky** with:
   currently on the panel (a new capture, or an older stored photo chosen
   below). The entity_id stays `image.inky_latest_photo` so existing
   automations keep working.
-- `select.inky_displayed_photo`, named **Inky Displayed Photo**, listing stored
-  photos newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`). Choosing
-  one shows it on the panel.
+- `select.inky_displayed_photo`, named **Inky Stored Photos**, listing stored
+  photos newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`). This is the
+  picker, not a second picture. Choosing one shows it on the panel.
 
-Home Assistant MQTT selects can only show text, not thumbnails, so the picker
-on the Inky device is a timestamp dropdown. There is no extra Lovelace card.
+Home Assistant cannot put a picture and a dropdown in one MQTT entity, so the
+device has both: the image, and the timestamp select. There is no extra
+Lovelace card.
 
 The device publishes online/offline availability and its actual light state.
 MQTT light commands remain active while the e-paper display refreshes. The

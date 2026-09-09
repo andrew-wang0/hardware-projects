@@ -153,7 +153,7 @@ class HomeAssistantSelectTests(unittest.TestCase):
         configs = self._payloads("homeassistant/select/inky/displayed_photo/config")
         self.assertTrue(configs)
         payload = json.loads(configs[-1])
-        self.assertEqual(payload["name"], "Displayed Photo")
+        self.assertEqual(payload["name"], "Stored Photos")
         self.assertEqual(payload["command_topic"], "inky/photo/select")
         self.assertEqual(
             payload["options"],

@@ -281,7 +281,7 @@ class HomeAssistant:
 
     def _select_config(self) -> dict:
         return {
-            "name": "Displayed Photo",
+            "name": "Stored Photos",
             "default_entity_id": f"select.{self._mqtt.device_id}_displayed_photo",
             "unique_id": f"{self._mqtt.device_id}_displayed_photo",
             "command_topic": self._topic("photo/select"),

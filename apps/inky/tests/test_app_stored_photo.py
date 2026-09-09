@@ -34,6 +34,7 @@ class InkyAppStoredPhotoTests(unittest.TestCase):
         self.events: SimpleQueue[ButtonEvent] = SimpleQueue()
         self.displayed: list[Path] = []
         self.idle: list[int] = []
+        self.busy_events: list[str] = []
         self.app = InkyApp(
             camera=MagicMock(),
             display=self.display,
@@ -46,6 +47,8 @@ class InkyAppStoredPhotoTests(unittest.TestCase):
             on_photo=MagicMock(),
             on_displayed=self.displayed.append,
             on_display_idle=lambda: self.idle.append(1),
+            on_busy=lambda: self.busy_events.append("busy"),
+            on_idle=lambda: self.busy_events.append("idle"),
         )
         self.path = Path("/tmp/1700000000.png")
 
@@ -53,8 +56,6 @@ class InkyAppStoredPhotoTests(unittest.TestCase):
         self.assertTrue(self.app.queue_stored_photo(self.path))
         self.assertEqual(self.app._take_pending_stored_photo(), self.path)
         self.assertTrue(self.app._busy)
-        self.assertTrue(self.app.queue_stored_photo(self.path))
-        self.app._capturing = True
         self.assertFalse(self.app.queue_stored_photo(self.path))
 
     def test_prepare_capture_cancels_pending_selection(self) -> None:
@@ -79,6 +80,7 @@ class InkyAppStoredPhotoTests(unittest.TestCase):
         self.show_light.stop_busy.assert_called_once()
         self.assertEqual(self.displayed, [self.path])
         self.assertFalse(self.app._busy)
+        self.assertEqual(self.busy_events, ["busy", "idle"])
         self.controls.set_enabled.assert_any_call(False)
         self.controls.set_enabled.assert_called_with(True)
 

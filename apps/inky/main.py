@@ -58,6 +58,8 @@ def main() -> None:
             home_assistant.publish_photo,
             home_assistant.show_stored_photo,
             home_assistant.publish_displayed_state,
+            home_assistant.set_photo_controls_busy,
+            home_assistant.set_photo_controls_idle,
         )
         home_assistant.set_display_handler(app.queue_stored_photo)
         home_assistant.start()

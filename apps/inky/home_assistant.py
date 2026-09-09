@@ -39,6 +39,7 @@ class HomeAssistant:
         self._preview: Path | None = self._displayed
         self._choices: list[PhotoChoice] = []
         self._published_options: list[str] | None = None
+        self._photo_busy = False
 
         if not self._mqtt.host:
             return
@@ -115,6 +116,12 @@ class HomeAssistant:
             )
         self._refresh_select()
 
+    def set_photo_controls_busy(self) -> None:
+        self._set_photo_busy(True)
+
+    def set_photo_controls_idle(self) -> None:
+        self._set_photo_busy(False)
+
     def close(self) -> None:
         if self._client is None:
             return
@@ -158,6 +165,7 @@ class HomeAssistant:
                 "photo/preview",
                 "Could not update the Home Assistant photo preview",
             )
+        self._publish_photo_controls()
         LOGGER.info("Connected to Home Assistant MQTT at %s", self._mqtt.host)
 
     def _on_connect_fail(self, _client, _userdata) -> None:
@@ -232,6 +240,23 @@ class HomeAssistant:
         self._choose_photo(path)
 
     def _choose_photo(self, path: Path) -> None:
+        if self._photo_busy:
+            LOGGER.info("Ignored photo selection while Inky is busy")
+            self._refresh_select()
+            return
+        if self._displayed is not None and path == self._displayed:
+            self._preview = path
+            self._publish_image(
+                path,
+                "photo/preview",
+                "Could not update the Home Assistant photo preview",
+            )
+            self._refresh_select()
+            return
+        if self._on_show_photo is None or not self._on_show_photo(path):
+            LOGGER.info("Ignored photo selection while Inky is busy")
+            self._refresh_select()
+            return
         self._preview = path
         self._publish_image(
             path,
@@ -239,13 +264,7 @@ class HomeAssistant:
             "Could not update the Home Assistant photo preview",
         )
         self._refresh_select()
-        if self._displayed is not None and path == self._displayed:
-            return
-        if self._on_show_photo is None or not self._on_show_photo(path):
-            LOGGER.info(
-                "Inky is capturing; previewed %s without changing the panel",
-                path.name,
-            )
+        self._set_photo_busy(True)
 
     def _publish_discovery(self) -> None:
         assert self._client is not None
@@ -301,7 +320,7 @@ class HomeAssistant:
             "payload_press": "PRESS",
             "icon": "mdi:skip-previous",
             "device": device,
-            **availability,
+            **self._photo_control_availability(),
         }
         next_photo = {
             "name": "Next Photo",
@@ -311,7 +330,7 @@ class HomeAssistant:
             "payload_press": "PRESS",
             "icon": "mdi:skip-next",
             "device": device,
-            **availability,
+            **self._photo_control_availability(),
         }
         self._publish_config("light", "light", light)
         self._publish_config("image", "latest_photo", image)
@@ -370,9 +389,24 @@ class HomeAssistant:
                 "manufacturer": "Custom",
                 "model": "Inky Impression 7.3",
             },
-            "availability_topic": self._topic("status"),
-            "payload_available": "online",
-            "payload_not_available": "offline",
+            **self._photo_control_availability(),
+        }
+
+    def _photo_control_availability(self) -> dict:
+        return {
+            "availability": [
+                {
+                    "topic": self._topic("status"),
+                    "payload_available": "online",
+                    "payload_not_available": "offline",
+                },
+                {
+                    "topic": self._topic("photo/controls"),
+                    "payload_available": "idle",
+                    "payload_not_available": "busy",
+                },
+            ],
+            "availability_mode": "all",
         }
 
     def _publish_config(self, component: str, entity: str, payload: dict) -> None:
@@ -462,6 +496,20 @@ class HomeAssistant:
                 LOGGER.warning("%s", warning)
         except (OSError, RuntimeError, ValueError):
             LOGGER.warning("%s", warning)
+
+    def _set_photo_busy(self, busy: bool) -> None:
+        self._photo_busy = busy
+        self._publish_photo_controls()
+
+    def _publish_photo_controls(self) -> None:
+        if self._client is None:
+            return
+        self._client.publish(
+            self._topic("photo/controls"),
+            "busy" if self._photo_busy else "idle",
+            qos=1,
+            retain=True,
+        )
 
     def _publish_capture_event(self, path: Path) -> None:
         if not self._connected or self._client is None or mqtt is None:

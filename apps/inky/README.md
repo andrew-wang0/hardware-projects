@@ -21,15 +21,16 @@ Home Assistant can also browse previously taken photos stored on Inky. Changing
 updates **Photo Preview** so you can see the picture instead of guessing from
 timestamps. If the panel is free, that photo is then shown on the e-paper.
 That path skips the camera, but still uses the busy breathing light and
-ignores the capture button until the refresh finishes. You can keep flipping
-through previews while a refresh is in progress; the last photo you land on is
-shown next.
+ignores the capture button until the refresh finishes.
+
+**Displayed Photo**, **Previous Photo**, and **Next Photo** become unavailable
+in Home Assistant for the whole capture or e-paper refresh. The dropdown
+cannot be used to pick another photo until the panel is idle again. The light
+and photo preview stay available.
 
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
-the button is released after the refresh finishes. A Home Assistant photo
-selection received during a live capture is previewed in Home Assistant and
-does not overwrite the photo that was just taken.
+the button is released after the refresh finishes.
 
 The big show light starts at `LIGHT_BRIGHTNESS` and can be switched or dimmed
 through Home Assistant. Capture illumination and the temporary breathing
@@ -109,7 +110,9 @@ device **Inky** with:
   newer.
 
 The device publishes online/offline availability and its actual light state.
-MQTT light commands remain active while the e-paper display refreshes.
+MQTT light commands remain active while the e-paper display refreshes. The
+photo dropdown and previous/next buttons do not: Home Assistant greys them out
+until the capture or refresh finishes.
 
 Light commands fade over one second by default, including ordinary dashboard
 toggle and brightness changes. Home Assistant can override that duration per

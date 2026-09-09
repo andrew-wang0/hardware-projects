@@ -31,6 +31,8 @@ class InkyApp:
         on_photo: Callable[[Path], None],
         on_displayed: Callable[[Path], None],
         on_display_idle: Callable[[], None],
+        on_busy: Callable[[], None],
+        on_idle: Callable[[], None],
     ) -> None:
         self._camera = camera
         self._display = display
@@ -43,6 +45,8 @@ class InkyApp:
         self._on_photo = on_photo
         self._on_displayed = on_displayed
         self._on_display_idle = on_display_idle
+        self._on_busy = on_busy
+        self._on_idle = on_idle
         self._lock = threading.Lock()
         self._busy = False
         self._capturing = False
@@ -50,7 +54,7 @@ class InkyApp:
 
     def queue_stored_photo(self, path: Path) -> bool:
         with self._lock:
-            if self._capturing:
+            if self._busy:
                 return False
             self._pending_stored_photo = path
             return True
@@ -86,6 +90,7 @@ class InkyApp:
             self._busy = True
             self._capturing = True
             self._pending_stored_photo = None
+        self._notify_busy()
         self._signal_led.on()
         self._show_light.start_capture()
         try:
@@ -105,6 +110,7 @@ class InkyApp:
             self._busy = True
             self._capturing = True
             self._pending_stored_photo = None
+        self._notify_busy()
         try:
             try:
                 image = self._camera.capture()
@@ -146,6 +152,7 @@ class InkyApp:
         self._controls.set_enabled(False)
         with self._lock:
             self._busy = True
+        self._notify_busy()
         try:
             self._show_light.start_busy()
             try:
@@ -175,6 +182,19 @@ class InkyApp:
         with self._lock:
             self._busy = False
             self._capturing = False
+        self._notify_idle()
+
+    def _notify_busy(self) -> None:
+        try:
+            self._on_busy()
+        except Exception:
+            LOGGER.exception("Home Assistant busy update failed")
+
+    def _notify_idle(self) -> None:
+        try:
+            self._on_idle()
+        except Exception:
+            LOGGER.exception("Home Assistant idle update failed")
 
     def _discard_events(self) -> None:
         while True:

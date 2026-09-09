@@ -96,9 +96,10 @@ device **Inky** with:
 
 - `light.inky_light`, named **Inky Light**, for independent on/off and
   brightness control.
-- `image.inky_latest_photo`, named **Inky Latest Photo**, for the most recent
-  camera capture. Browsing older photos does not change this entity, so the
-  archive automation below stays accurate.
+- `image.inky_latest_photo`, named **Inky Current Photo**, for the 800×480 PNG
+  currently on the panel (a new capture, or an older stored photo chosen
+  below). The entity_id stays `image.inky_latest_photo` so existing
+  automations keep working.
 - `image.inky_photo_preview`, named **Inky Photo Preview**, for the photo
   currently selected in Home Assistant. This updates immediately so you can
   identify a shot before (or while) the e-paper refreshes.
@@ -214,7 +215,7 @@ mode: queued
 ```
 
 `inky/photo/captured` is published only for live camera captures (not for
-reconnect republishes of the latest photo). The payload is the PNG filename
+reconnect republishes of the current photo). The payload is the PNG filename
 already stored on Inky, and the same `filename` variable is used for both the
 media archive and the notification attachment.
 

@@ -83,7 +83,7 @@ class HomeAssistant:
             self._client = None
 
     def publish_photo(self, path: Path, *, announce: bool = True) -> None:
-        self._publish_image(path, "photo", "Could not update the latest Home Assistant photo")
+        self._publish_image(path, "photo", "Could not update the current Home Assistant photo")
         if announce:
             self._publish_capture_event(path)
         self._preview = path
@@ -104,11 +104,21 @@ class HomeAssistant:
         self._refresh_select()
 
     def show_stored_photo(self, path: Path) -> None:
+        self._publish_image(
+            path,
+            "photo",
+            "Could not update the current Home Assistant photo",
+        )
         self.set_displayed(path)
 
     def publish_displayed_state(self) -> None:
         self._preview = self._displayed
         if self._displayed is not None:
+            self._publish_image(
+                self._displayed,
+                "photo",
+                "Could not update the current Home Assistant photo",
+            )
             self._publish_image(
                 self._displayed,
                 "photo/preview",
@@ -158,7 +168,7 @@ class HomeAssistant:
         self._publish_discovery()
         client.publish(self._topic("status"), "online", qos=1, retain=True)
         self._publish_light_state()
-        self._publish_latest_capture()
+        self._publish_current_photo()
         if self._preview is not None:
             self._publish_image(
                 self._preview,
@@ -294,7 +304,10 @@ class HomeAssistant:
             **availability,
         }
         image = {
-            "name": "Latest Photo",
+            # Entity name is "Current Photo"; HA prefixes the device name
+            # → "Inky Current Photo". unique_id stays latest_photo so existing
+            # image.inky_latest_photo entities keep their entity_id.
+            "name": "Current Photo",
             "default_entity_id": f"image.{self._mqtt.device_id}_latest_photo",
             "unique_id": f"{self._mqtt.device_id}_latest_photo",
             "image_topic": self._topic("photo"),
@@ -464,22 +477,24 @@ class HomeAssistant:
             retain=True,
         )
 
-    def _publish_latest_capture(self) -> None:
-        try:
-            latest = max(
-                (
-                    candidate
-                    for candidate in self._config.image_dir.glob("*.png")
-                    if candidate.is_file() and not candidate.name.startswith(".")
-                ),
-                key=lambda candidate: candidate.stat().st_mtime_ns,
-            )
-        except (OSError, ValueError):
-            return
+    def _publish_current_photo(self) -> None:
+        path = self._displayed
+        if path is None or not path.is_file():
+            try:
+                path = max(
+                    (
+                        candidate
+                        for candidate in self._config.image_dir.glob("*.png")
+                        if candidate.is_file() and not candidate.name.startswith(".")
+                    ),
+                    key=lambda candidate: candidate.stat().st_mtime_ns,
+                )
+            except (OSError, ValueError):
+                return
         self._publish_image(
-            latest,
+            path,
             "photo",
-            "Could not update the latest Home Assistant photo",
+            "Could not update the current Home Assistant photo",
         )
 
     def _publish_image(self, path: Path, suffix: str, warning: str) -> None:

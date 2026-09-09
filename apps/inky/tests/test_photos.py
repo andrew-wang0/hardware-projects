@@ -11,10 +11,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from photos import (
+    encode_photo_thumbnail,
     load_displayed,
-    neighbor_photo,
     photo_choices,
     photo_label,
+    photo_object_id,
     resolve_photo_choice,
     resolve_photo_path,
     save_displayed,
@@ -108,14 +109,15 @@ class PhotoLibraryTests(unittest.TestCase):
         labels = {choice.label for choice in choices}
         self.assertEqual(labels, {"same · a.png", "same · b.png"})
 
-    def test_steps_to_neighbor_photos(self) -> None:
-        older = write_photo(self.image_dir, "1700000000.png", mtime=1)
-        newer = write_photo(self.image_dir, "1800000000.png", mtime=2)
-        choices = photo_choices(self.image_dir, limit=10)
+    def test_object_id_uses_photo_stem(self) -> None:
+        path = write_photo(self.image_dir, "1700000000.png")
+        self.assertEqual(photo_object_id(path), "photo_1700000000")
 
-        self.assertEqual(neighbor_photo(choices, newer, 1), older)
-        self.assertEqual(neighbor_photo(choices, older, -1), newer)
-        self.assertEqual(neighbor_photo(choices, newer, -1), older)
+    def test_thumbnail_falls_back_when_file_is_not_an_image(self) -> None:
+        path = write_photo(self.image_dir, "1700000000.png")
+        payload, content_type = encode_photo_thumbnail(path)
+        self.assertEqual(payload, b"png")
+        self.assertEqual(content_type, "image/png")
 
 
 if __name__ == "__main__":

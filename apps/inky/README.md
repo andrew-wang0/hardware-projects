@@ -16,17 +16,14 @@ on an Inky Impression 7.3 Spectra (800×480).
 5. The big light fades back to its latest Home Assistant setting (true 0% PWM
    when that setting is off).
 
-Home Assistant can also browse previously taken photos stored on Inky. Changing
-**Displayed Photo**, or using **Previous Photo** / **Next Photo**, immediately
-updates **Photo Preview** so you can see the picture instead of guessing from
-timestamps. If the panel is free, that photo is then shown on the e-paper.
-That path skips the camera, but still uses the busy breathing light and
-ignores the capture button until the refresh finishes.
+Home Assistant can also browse previously taken photos stored on Inky. The
+**Inky Photos** dashboard card shows a grid of the actual pictures (not a
+timestamp dropdown). Tapping a photo shows it on the e-paper. That path skips
+the camera, but still uses the busy breathing light and ignores the capture
+button until the refresh finishes.
 
-**Displayed Photo**, **Previous Photo**, and **Next Photo** become unavailable
-in Home Assistant for the whole capture or e-paper refresh. The dropdown
-cannot be used to pick another photo until the panel is idle again. The light
-and photo preview stay available.
+The grid ignores taps for the whole capture or e-paper refresh. **Current
+Photo** still shows whatever is on the panel.
 
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
@@ -100,20 +97,33 @@ device **Inky** with:
   currently on the panel (a new capture, or an older stored photo chosen
   below). The entity_id stays `image.inky_latest_photo` so existing
   automations keep working.
-- `image.inky_photo_preview`, named **Inky Photo Preview**, for the photo
-  currently selected in Home Assistant. This updates immediately so you can
-  identify a shot before (or while) the e-paper refreshes.
-- `select.inky_displayed_photo`, named **Inky Displayed Photo**, listing stored
-  photos newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`). Choosing
-  one updates the preview and shows it on the panel.
-- `button.inky_previous_photo` and `button.inky_next_photo`, to step through
-  stored photos while watching the preview. Next goes older; Previous goes
-  newer.
+- One diagnostic image entity per stored photo (`image.inky_photo_<timestamp>`),
+  named with the capture timestamp, so dashboards can show the pictures
+  themselves.
+- `sensor.inky_photo_library` and `binary_sensor.inky_photo_busy`, used by the
+  photo grid card.
+
+Home Assistant MQTT selects can only show text, so there is no timestamp
+dropdown. Copy `dashboard/inky-photos-card.js` to Home Assistant
+`/config/www/inky-photos-card.js`, then add a Lovelace resource:
+
+- URL: `/local/inky-photos-card.js`
+- Type: JavaScript module
+
+Put the grid on a dashboard:
+
+```yaml
+type: custom:inky-photos-card
+```
+
+Optional card options: `title`, `library` (default `sensor.inky_photo_library`),
+`busy` (default `binary_sensor.inky_photo_busy`), and `command_topic` (default
+`inky/photo/select`).
 
 The device publishes online/offline availability and its actual light state.
 MQTT light commands remain active while the e-paper display refreshes. The
-photo dropdown and previous/next buttons do not: Home Assistant greys them out
-until the capture or refresh finishes.
+photo grid does not: tapping another photo is ignored until the capture or
+refresh finishes.
 
 Light commands fade over one second by default, including ordinary dashboard
 toggle and brightness changes. Home Assistant can override that duration per
@@ -130,53 +140,14 @@ data:
 
 Use `light.turn_off` with the same `transition` field for a smooth fade out.
 
-The MQTT select cannot show thumbnails in its dropdown. Put the preview image
-above the controls on a dashboard:
+To show an older photo from an automation, publish its stored PNG filename
+(`1725892923.png`):
 
 ```yaml
-type: vertical-stack
-cards:
-  - type: picture-entity
-    entity: image.inky_photo_preview
-    show_name: false
-    show_state: false
-  - type: horizontal-stack
-    cards:
-      - type: button
-        entity: button.inky_previous_photo
-        name: Previous
-        icon: mdi:skip-previous
-        tap_action:
-          action: perform-action
-          perform_action: button.press
-          target:
-            entity_id: button.inky_previous_photo
-      - type: button
-        entity: button.inky_next_photo
-        name: Next
-        icon: mdi:skip-next
-        tap_action:
-          action: perform-action
-          perform_action: button.press
-          target:
-            entity_id: button.inky_next_photo
-  - type: entities
-    entities:
-      - select.inky_displayed_photo
-```
-
-**Previous** / **Next** are the easy way to filter through shots. The timestamp
-select is still there for automations and jumping to a known time. Choosing a
-photo that is already on the panel only refreshes the preview. The select also
-accepts the stored PNG filename (`1725892923.png`), which is useful in
-automations and for photos older than the option list limit:
-
-```yaml
-action: select.select_option
-target:
-  entity_id: select.inky_displayed_photo
+action: mqtt.publish
 data:
-  option: "2026-09-09 14:22:03"
+  topic: inky/photo/select
+  payload: "1725892923.png"
 ```
 
 PWM stays at a fixed frequency. Home Assistant off is always true 0% duty, and
@@ -275,7 +246,7 @@ and blocks until the refresh is complete.
 - `CAMERA_EXPOSURE_VALUE=0.0` (negative darkens if shots are still too bright)
 - `CAMERA_AE_SETTLE_SECONDS=0.5` (wait after the capture light turns on)
 - `INKY_SATURATION=0.5`
-- `INKY_PHOTO_SELECT_LIMIT=100` (newest stored photos listed in Home Assistant)
+- `INKY_PHOTO_SELECT_LIMIT=100` (newest stored photos shown in the Home Assistant photo grid)
 - `MQTT_HOST=homeassistant.local` (unset disables MQTT)
 - `MQTT_PORT=1883`
 - `MQTT_USERNAME=inky`

@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import Config, MqttConfig
 from home_assistant import HomeAssistant
-from photos import photo_label, save_displayed
+from photos import photo_label, photo_object_id, save_displayed
 
 import home_assistant as home_assistant_module
 
@@ -118,7 +118,7 @@ def make_config(image_dir: Path, limit: int = 100) -> Config:
     )
 
 
-class HomeAssistantSelectTests(unittest.TestCase):
+class HomeAssistantLibraryTests(unittest.TestCase):
     def setUp(self) -> None:
         self._temp = tempfile.TemporaryDirectory()
         self.image_dir = Path(self._temp.name)
@@ -143,75 +143,96 @@ class HomeAssistantSelectTests(unittest.TestCase):
         return True
 
     def _payloads(self, topic: str) -> list[object]:
-        return [payload for published, payload, _qos, _retain in self.client.published if published == topic]
+        return [
+            payload
+            for published, payload, _qos, _retain in self.client.published
+            if published == topic
+        ]
 
-    def test_discovery_lists_stored_photos(self) -> None:
-        configs = self._payloads("homeassistant/select/inky/displayed_photo/config")
-        self.assertTrue(configs)
-        payload = json.loads(configs[-1])
-        self.assertEqual(payload["name"], "Displayed Photo")
-        self.assertEqual(payload["availability_mode"], "all")
-        self.assertEqual(
-            payload["availability"][-1],
-            {
-                "topic": "inky/photo/controls",
-                "payload_available": "idle",
-                "payload_not_available": "busy",
-            },
-        )
-        self.assertEqual(self._payloads("inky/photo/controls")[-1], "idle")
-        self.assertEqual(payload["command_topic"], "inky/photo/select")
-        self.assertEqual(
-            payload["options"],
-            [photo_label(self.newer), photo_label(self.older)],
-        )
-        self.assertIn("inky/photo/select", self.client.subscribed)
-        self.assertIn("inky/photo/previous", self.client.subscribed)
-        self.assertIn("inky/photo/next", self.client.subscribed)
-        preview = self._payloads("homeassistant/image/inky/photo_preview/config")
-        self.assertTrue(preview)
-        self.assertEqual(json.loads(preview[-1])["image_topic"], "inky/photo/preview")
+    def _library_photos(self) -> list[dict]:
+        payload = json.loads(self._payloads("inky/photo/library_attrs")[-1])
+        return payload["photos"]
+
+    def test_discovery_publishes_photo_thumbnails_not_a_dropdown(self) -> None:
         current = self._payloads("homeassistant/image/inky/latest_photo/config")
         self.assertTrue(current)
         self.assertEqual(json.loads(current[-1])["name"], "Current Photo")
-        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"new")
+        self.assertEqual(self._payloads("inky/photo")[-1], b"new")
+
+        self.assertEqual(self._payloads("homeassistant/select/inky/displayed_photo/config")[-1], None)
+        self.assertEqual(self._payloads("homeassistant/image/inky/photo_preview/config")[-1], None)
+        self.assertEqual(self._payloads("homeassistant/button/inky/previous_photo/config")[-1], None)
+        self.assertEqual(self._payloads("homeassistant/button/inky/next_photo/config")[-1], None)
+        self.assertNotIn("inky/photo/previous", self.client.subscribed)
+        self.assertNotIn("inky/photo/next", self.client.subscribed)
+        self.assertIn("inky/photo/select", self.client.subscribed)
+
+        newer_id = photo_object_id(self.newer)
+        older_id = photo_object_id(self.older)
+        newer_config = json.loads(
+            self._payloads(f"homeassistant/image/inky/{newer_id}/config")[-1]
+        )
+        self.assertEqual(newer_config["name"], photo_label(self.newer))
+        self.assertEqual(newer_config["default_entity_id"], f"image.inky_{newer_id}")
+        self.assertEqual(
+            newer_config["image_topic"],
+            f"inky/photo/library/{newer_id}",
+        )
+        self.assertEqual(self._payloads(f"inky/photo/library/{newer_id}")[-1], b"new")
+        self.assertEqual(self._payloads(f"inky/photo/library/{older_id}")[-1], b"old")
+
+        busy = json.loads(self._payloads("homeassistant/binary_sensor/inky/photo_busy/config")[-1])
+        self.assertEqual(busy["state_topic"], "inky/photo/controls")
+        self.assertEqual(self._payloads("inky/photo/controls")[-1], "idle")
+        self.assertEqual(self._payloads("inky/photo/library")[-1], "2")
+        self.assertEqual(
+            self._library_photos(),
+            [
+                {
+                    "filename": "1800000000.png",
+                    "label": photo_label(self.newer),
+                    "entity_id": "image.inky_photo_1800000000",
+                    "current": True,
+                },
+                {
+                    "filename": "1700000000.png",
+                    "label": photo_label(self.older),
+                    "entity_id": "image.inky_photo_1700000000",
+                    "current": False,
+                },
+            ],
+        )
 
     def test_select_command_queues_stored_photo(self) -> None:
         self.client.published.clear()
-        self.ha._handle_select_command(photo_label(self.older).encode())
+        self.ha._handle_select_command(b"1700000000.png")
 
         self.assertEqual(self.queued, [self.older])
-        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
-        self.assertEqual(self._payloads("inky/photo")[-1:], [])
-        self.assertEqual(
-            self._payloads("inky/photo/displayed")[-1],
-            photo_label(self.older),
-        )
+        self.assertEqual(self._payloads("inky/photo"), [])
         self.assertEqual(self._payloads("inky/photo/controls")[-1], "busy")
+        attrs = json.loads(self._payloads("inky/photo/library_attrs")[-1])
+        self.assertTrue(attrs["busy"])
+        self.assertTrue(self._library_photos()[0]["current"])
 
-    def test_select_command_accepts_filename(self) -> None:
-        self.ha._handle_select_command(b"1700000000.png")
+    def test_select_command_accepts_timestamp_label(self) -> None:
+        self.ha._handle_select_command(photo_label(self.older).encode())
 
         self.assertEqual(self.queued, [self.older])
 
     def test_busy_controls_ignore_photo_changes(self) -> None:
         self.ha.set_photo_controls_busy()
         self.client.published.clear()
-        self.ha._handle_select_command(photo_label(self.older).encode())
-        self.ha._handle_step(1)
+        self.ha._handle_select_command(b"1700000000.png")
 
         self.assertEqual(self.queued, [])
-        self.assertEqual(self._payloads("inky/photo/preview"), [])
-        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
+        self.assertEqual(self._payloads("inky/photo"), [])
 
-    def test_rejected_queue_does_not_change_preview(self) -> None:
+    def test_rejected_queue_does_not_mark_busy(self) -> None:
         self.ha.set_display_handler(lambda _path: False)
         self.client.published.clear()
-        self.ha._handle_select_command(photo_label(self.older).encode())
+        self.ha._handle_select_command(b"1700000000.png")
 
         self.assertEqual(self.queued, [])
-        self.assertEqual(self._payloads("inky/photo/preview"), [])
-        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
         self.assertEqual(self._payloads("inky/photo/controls"), [])
 
     def test_invalid_selection_is_ignored(self) -> None:
@@ -222,25 +243,19 @@ class HomeAssistantSelectTests(unittest.TestCase):
     def test_current_photo_is_a_noop(self) -> None:
         save_displayed(self.image_dir, self.newer)
         self.ha._displayed = self.newer
-        self.ha._preview = self.newer
-        self.ha._handle_select_command(photo_label(self.newer).encode())
+        self.ha._handle_select_command(b"1800000000.png")
 
         self.assertEqual(self.queued, [])
-
-    def test_next_photo_steps_to_older_preview(self) -> None:
-        self.client.published.clear()
-        self.ha._handle_step(1)
-
-        self.assertEqual(self.queued, [self.older])
-        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
-        self.assertEqual(self._payloads("inky/photo/controls")[-1], "busy")
 
     def test_showing_a_stored_photo_updates_current_photo(self) -> None:
         self.client.published.clear()
         self.ha.show_stored_photo(self.older)
 
         self.assertEqual(self._payloads("inky/photo")[-1], b"old")
-        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.older))
+        photos = self._library_photos()
+        self.assertEqual(photos[1]["filename"], "1700000000.png")
+        self.assertTrue(photos[1]["current"])
+        self.assertFalse(photos[0]["current"])
 
     def test_reconnect_republishes_the_displayed_photo(self) -> None:
         save_displayed(self.image_dir, self.older)
@@ -248,10 +263,25 @@ class HomeAssistantSelectTests(unittest.TestCase):
         self.ha._on_connect(self.client, None, None, 0, None)
 
         self.assertEqual(self._payloads("inky/photo")[-1], b"old")
-        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
+        photos = self._library_photos()
+        self.assertTrue(photos[1]["current"])
+        self.assertEqual(photos[1]["filename"], "1700000000.png")
+
+    def test_removed_photos_are_cleared_from_home_assistant(self) -> None:
+        self.older.unlink()
+        self.client.published.clear()
+        self.ha.publish_displayed_state()
+
+        older_id = photo_object_id(self.older)
         self.assertEqual(
-            self._payloads("inky/photo/displayed")[-1],
-            photo_label(self.older),
+            self._payloads(f"homeassistant/image/inky/{older_id}/config")[-1],
+            None,
+        )
+        self.assertEqual(self._payloads(f"inky/photo/library/{older_id}")[-1], None)
+        self.assertEqual(self._payloads("inky/photo/library")[-1], "1")
+        self.assertEqual(
+            [photo["filename"] for photo in self._library_photos()],
+            ["1800000000.png"],
         )
 
 

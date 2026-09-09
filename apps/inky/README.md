@@ -16,9 +16,16 @@ on an Inky Impression 7.3 Spectra (800×480).
 5. The big light fades back to its latest Home Assistant setting (true 0% PWM
    when that setting is off).
 
+Home Assistant can also choose a previously taken photo stored on Inky and
+show it on the panel. That path skips the camera, but still uses the busy
+breathing light and ignores the capture button until the e-paper refresh
+finishes.
+
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
-the button is released after the refresh finishes.
+the button is released after the refresh finishes. A Home Assistant photo
+selection received during capture or refresh is ignored so it cannot overwrite
+the photo that is already being shown.
 
 The big show light starts at `LIGHT_BRIGHTNESS` and can be switched or dimmed
 through Home Assistant. Capture illumination and the temporary breathing
@@ -84,8 +91,14 @@ device **Inky** with:
 
 - `light.inky_light`, named **Inky Light**, for independent on/off and
   brightness control.
-- `image.inky_latest_photo`, named **Inky Latest Photo**, for the latest
-  captured 800×480 PNG.
+- `image.inky_latest_photo`, named **Inky Latest Photo**, for the 800×480 PNG
+  currently on the panel (the latest capture, or an older stored photo chosen
+  below).
+- `select.inky_displayed_photo`, named **Inky Displayed Photo**, to pick a
+  previously taken photo from Inky's local `images/` directory and show it on
+  the panel. Options are newest first and use the capture timestamp
+  (`YYYY-MM-DD HH:MM:SS`). The current selection is restored after MQTT
+  reconnects.
 
 The device publishes online/offline availability and its actual light state.
 MQTT light commands remain active while the e-paper display refreshes.
@@ -104,6 +117,20 @@ data:
 ```
 
 Use `light.turn_off` with the same `transition` field for a smooth fade out.
+
+To show a stored photo from a dashboard or automation, set **Displayed Photo**.
+The capture button is ignored while that image is prepared and the e-paper
+refreshes. Choosing the photo that is already on the panel is a no-op. The
+select also accepts the stored PNG filename (`1725892923.png`), which is useful
+in automations and for photos older than the option list limit:
+
+```yaml
+action: select.select_option
+target:
+  entity_id: select.inky_displayed_photo
+data:
+  option: "2026-09-09 14:22:03"
+```
 
 PWM stays at a fixed frequency. Home Assistant off is always true 0% duty, and
 on/off commands fade to and from that level. To avoid unstable ultra-short
@@ -201,6 +228,7 @@ and blocks until the refresh is complete.
 - `CAMERA_EXPOSURE_VALUE=0.0` (negative darkens if shots are still too bright)
 - `CAMERA_AE_SETTLE_SECONDS=0.5` (wait after the capture light turns on)
 - `INKY_SATURATION=0.5`
+- `INKY_PHOTO_SELECT_LIMIT=100` (newest stored photos listed in Home Assistant)
 - `MQTT_HOST=homeassistant.local` (unset disables MQTT)
 - `MQTT_PORT=1883`
 - `MQTT_USERNAME=inky`

@@ -62,6 +62,7 @@ class Config:
     camera_exposure_value: float
     camera_ae_settle_seconds: float
     inky_saturation: float
+    photo_select_limit: int
     mqtt: MqttConfig
 
 
@@ -88,6 +89,7 @@ def load_config() -> Config:
         camera_exposure_value=_number("CAMERA_EXPOSURE_VALUE", 0.0),
         camera_ae_settle_seconds=_number("CAMERA_AE_SETTLE_SECONDS", 0.5),
         inky_saturation=_number("INKY_SATURATION", 0.5),
+        photo_select_limit=_integer("INKY_PHOTO_SELECT_LIMIT", 100),
         mqtt=MqttConfig(
             host=os.getenv("MQTT_HOST"),
             port=_integer("MQTT_PORT", 1883),
@@ -137,6 +139,8 @@ def load_config() -> Config:
         raise ValueError("CAMERA_AE_SETTLE_SECONDS cannot be negative")
     if not 0.0 <= config.inky_saturation <= 1.0:
         raise ValueError("INKY_SATURATION must be between 0.0 and 1.0")
+    if config.photo_select_limit < 1:
+        raise ValueError("INKY_PHOTO_SELECT_LIMIT must be at least 1")
     if not 1 <= config.mqtt.port <= 65_535:
         raise ValueError("MQTT_PORT must be between 1 and 65535")
     if not config.mqtt.device_id.replace("-", "").replace("_", "").isalnum():

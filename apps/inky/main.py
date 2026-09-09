@@ -46,8 +46,7 @@ def main() -> None:
         controls = CaptureButton(config, events.put)
         camera = Camera(config)
         home_assistant = HomeAssistant(config, show_light)
-        home_assistant.start()
-        InkyApp(
+        app = InkyApp(
             camera,
             display,
             controls,
@@ -57,7 +56,12 @@ def main() -> None:
             stop_event,
             config.image_dir,
             home_assistant.publish_photo,
-        ).run()
+            home_assistant.show_stored_photo,
+            home_assistant.publish_displayed_state,
+        )
+        home_assistant.set_display_handler(app.queue_stored_photo)
+        home_assistant.start()
+        app.run()
     finally:
         for resource in (
             controls,

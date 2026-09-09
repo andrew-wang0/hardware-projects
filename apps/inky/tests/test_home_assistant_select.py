@@ -156,23 +156,39 @@ class HomeAssistantSelectTests(unittest.TestCase):
             [photo_label(self.newer), photo_label(self.older)],
         )
         self.assertIn("inky/photo/select", self.client.subscribed)
+        self.assertIn("inky/photo/previous", self.client.subscribed)
+        self.assertIn("inky/photo/next", self.client.subscribed)
+        preview = self._payloads("homeassistant/image/inky/photo_preview/config")
+        self.assertTrue(preview)
+        self.assertEqual(json.loads(preview[-1])["image_topic"], "inky/photo/preview")
+        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"new")
 
     def test_select_command_queues_stored_photo(self) -> None:
+        self.client.published.clear()
         self.ha._handle_select_command(photo_label(self.older).encode())
 
         self.assertEqual(self.queued, [self.older])
+        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
+        self.assertEqual(self._payloads("inky/photo")[-1:], [])
+        self.assertEqual(
+            self._payloads("inky/photo/displayed")[-1],
+            photo_label(self.older),
+        )
 
     def test_select_command_accepts_filename(self) -> None:
         self.ha._handle_select_command(b"1700000000.png")
 
         self.assertEqual(self.queued, [self.older])
 
-    def test_busy_selection_is_ignored(self) -> None:
+    def test_busy_capture_updates_preview_without_changing_the_panel(self) -> None:
         self.ha.set_display_handler(lambda _path: False)
+        self.client.published.clear()
         self.ha._handle_select_command(photo_label(self.older).encode())
 
         self.assertEqual(self.queued, [])
-        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
+        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
+        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.older))
+        self.assertEqual(self._payloads("inky/photo"), [])
 
     def test_invalid_selection_is_ignored(self) -> None:
         self.ha._handle_select_command(b"../secret.png")
@@ -182,16 +198,25 @@ class HomeAssistantSelectTests(unittest.TestCase):
     def test_current_photo_is_a_noop(self) -> None:
         save_displayed(self.image_dir, self.newer)
         self.ha._displayed = self.newer
+        self.ha._preview = self.newer
         self.ha._handle_select_command(photo_label(self.newer).encode())
 
         self.assertEqual(self.queued, [])
+
+    def test_next_photo_steps_to_older_preview(self) -> None:
+        self.client.published.clear()
+        self.ha._handle_step(1)
+
+        self.assertEqual(self.queued, [self.older])
+        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
 
     def test_reconnect_republishes_the_displayed_photo(self) -> None:
         save_displayed(self.image_dir, self.older)
         self.client.published.clear()
         self.ha._on_connect(self.client, None, None, 0, None)
 
-        self.assertEqual(self._payloads("inky/photo")[-1], b"old")
+        self.assertEqual(self._payloads("inky/photo")[-1], b"new")
+        self.assertEqual(self._payloads("inky/photo/preview")[-1], b"old")
         self.assertEqual(
             self._payloads("inky/photo/displayed")[-1],
             photo_label(self.older),

@@ -16,16 +16,20 @@ on an Inky Impression 7.3 Spectra (800×480).
 5. The big light fades back to its latest Home Assistant setting (true 0% PWM
    when that setting is off).
 
-Home Assistant can also choose a previously taken photo stored on Inky and
-show it on the panel. That path skips the camera, but still uses the busy
-breathing light and ignores the capture button until the e-paper refresh
-finishes.
+Home Assistant can also browse previously taken photos stored on Inky. Changing
+**Displayed Photo**, or using **Previous Photo** / **Next Photo**, immediately
+updates **Photo Preview** so you can see the picture instead of guessing from
+timestamps. If the panel is free, that photo is then shown on the e-paper.
+That path skips the camera, but still uses the busy breathing light and
+ignores the capture button until the refresh finishes. You can keep flipping
+through previews while a refresh is in progress; the last photo you land on is
+shown next.
 
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
 the button is released after the refresh finishes. A Home Assistant photo
-selection received during capture or refresh is ignored so it cannot overwrite
-the photo that is already being shown.
+selection received during a live capture is previewed in Home Assistant and
+does not overwrite the photo that was just taken.
 
 The big show light starts at `LIGHT_BRIGHTNESS` and can be switched or dimmed
 through Home Assistant. Capture illumination and the temporary breathing
@@ -91,14 +95,18 @@ device **Inky** with:
 
 - `light.inky_light`, named **Inky Light**, for independent on/off and
   brightness control.
-- `image.inky_latest_photo`, named **Inky Latest Photo**, for the 800×480 PNG
-  currently on the panel (the latest capture, or an older stored photo chosen
-  below).
-- `select.inky_displayed_photo`, named **Inky Displayed Photo**, to pick a
-  previously taken photo from Inky's local `images/` directory and show it on
-  the panel. Options are newest first and use the capture timestamp
-  (`YYYY-MM-DD HH:MM:SS`). The current selection is restored after MQTT
-  reconnects.
+- `image.inky_latest_photo`, named **Inky Latest Photo**, for the most recent
+  camera capture. Browsing older photos does not change this entity, so the
+  archive automation below stays accurate.
+- `image.inky_photo_preview`, named **Inky Photo Preview**, for the photo
+  currently selected in Home Assistant. This updates immediately so you can
+  identify a shot before (or while) the e-paper refreshes.
+- `select.inky_displayed_photo`, named **Inky Displayed Photo**, listing stored
+  photos newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`). Choosing
+  one updates the preview and shows it on the panel.
+- `button.inky_previous_photo` and `button.inky_next_photo`, to step through
+  stored photos while watching the preview. Next goes older; Previous goes
+  newer.
 
 The device publishes online/offline availability and its actual light state.
 MQTT light commands remain active while the e-paper display refreshes.
@@ -118,11 +126,46 @@ data:
 
 Use `light.turn_off` with the same `transition` field for a smooth fade out.
 
-To show a stored photo from a dashboard or automation, set **Displayed Photo**.
-The capture button is ignored while that image is prepared and the e-paper
-refreshes. Choosing the photo that is already on the panel is a no-op. The
-select also accepts the stored PNG filename (`1725892923.png`), which is useful
-in automations and for photos older than the option list limit:
+The MQTT select cannot show thumbnails in its dropdown. Put the preview image
+above the controls on a dashboard:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: picture-entity
+    entity: image.inky_photo_preview
+    show_name: false
+    show_state: false
+  - type: horizontal-stack
+    cards:
+      - type: button
+        entity: button.inky_previous_photo
+        name: Previous
+        icon: mdi:skip-previous
+        tap_action:
+          action: perform-action
+          perform_action: button.press
+          target:
+            entity_id: button.inky_previous_photo
+      - type: button
+        entity: button.inky_next_photo
+        name: Next
+        icon: mdi:skip-next
+        tap_action:
+          action: perform-action
+          perform_action: button.press
+          target:
+            entity_id: button.inky_next_photo
+  - type: entities
+    entities:
+      - select.inky_displayed_photo
+```
+
+**Previous** / **Next** are the easy way to filter through shots. The timestamp
+select is still there for automations and jumping to a known time. Choosing a
+photo that is already on the panel only refreshes the preview. The select also
+accepts the stored PNG filename (`1725892923.png`), which is useful in
+automations and for photos older than the option list limit:
 
 ```yaml
 action: select.select_option

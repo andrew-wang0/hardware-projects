@@ -85,6 +85,21 @@ def resolve_photo_choice(
     return resolve_photo_path(image_dir, option)
 
 
+def neighbor_photo(
+    choices: list[PhotoChoice],
+    current: Path | None,
+    delta: int,
+) -> Path | None:
+    if not choices:
+        return None
+    names = [choice.path.name for choice in choices]
+    try:
+        index = names.index(current.name) if current is not None else 0
+    except ValueError:
+        index = 0
+    return choices[(index + delta) % len(choices)].path
+
+
 def load_displayed(image_dir: Path) -> Path | None:
     try:
         name = (image_dir / DISPLAYED_STATE_NAME).read_text(encoding="utf-8").strip()

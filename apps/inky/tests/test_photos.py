@@ -11,7 +11,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from photos import (
-    encode_photo_thumbnail,
     load_displayed,
     photo_choices,
     photo_label,
@@ -112,12 +111,6 @@ class PhotoLibraryTests(unittest.TestCase):
     def test_object_id_uses_photo_stem(self) -> None:
         path = write_photo(self.image_dir, "1700000000.png")
         self.assertEqual(photo_object_id(path), "photo_1700000000")
-
-    def test_thumbnail_falls_back_when_file_is_not_an_image(self) -> None:
-        path = write_photo(self.image_dir, "1700000000.png")
-        payload, content_type = encode_photo_thumbnail(path)
-        self.assertEqual(payload, b"png")
-        self.assertEqual(content_type, "image/png")
 
 
 if __name__ == "__main__":

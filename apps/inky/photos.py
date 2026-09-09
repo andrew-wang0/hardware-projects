@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 import re
 
@@ -10,7 +9,6 @@ import re
 TIMESTAMP_NAME = re.compile(r"^[0-9]+$")
 OBJECT_ID_SAFE = re.compile(r"[^a-zA-Z0-9_]+")
 DISPLAYED_STATE_NAME = ".displayed"
-THUMBNAIL_WIDTH = 400
 
 
 @dataclass(frozen=True)
@@ -42,29 +40,6 @@ def photo_object_id(path: Path) -> str:
     if not stem:
         raise ValueError("invalid photo name")
     return f"photo_{stem}"
-
-
-def encode_photo_thumbnail(
-    path: Path,
-    max_width: int = THUMBNAIL_WIDTH,
-) -> tuple[bytes, str]:
-    try:
-        from PIL import Image
-    except ImportError:
-        return path.read_bytes(), "image/png"
-
-    try:
-        with Image.open(path) as image:
-            rgb = image.convert("RGB")
-            width, height = rgb.size
-            if width > max_width > 0:
-                resized_height = max(1, round(height * max_width / width))
-                rgb = rgb.resize((max_width, resized_height), Image.LANCZOS)
-            buffer = BytesIO()
-            rgb.save(buffer, format="JPEG", quality=70)
-            return buffer.getvalue(), "image/jpeg"
-    except Exception:
-        return path.read_bytes(), "image/png"
 
 
 def photo_choices(

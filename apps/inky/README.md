@@ -16,14 +16,14 @@ on an Inky Impression 7.3 Spectra (800×480).
 5. The big light fades back to its latest Home Assistant setting (true 0% PWM
    when that setting is off).
 
-Home Assistant can also browse previously taken photos stored on Inky. The
-**Inky Photos** dashboard card shows a grid of the actual pictures (not a
-timestamp dropdown). Tapping a photo shows it on the e-paper. That path skips
-the camera, but still uses the busy breathing light and ignores the capture
+Home Assistant can also show a previously taken photo stored on Inky. The
+Inky device has **Displayed Photo**, a timestamp dropdown of stored shots
+(newest first). Choosing one shows it on the e-paper. That path skips the
+camera, but still uses the busy breathing light and ignores the capture
 button until the refresh finishes.
 
-The grid ignores taps for the whole capture or e-paper refresh. **Current
-Photo** still shows whatever is on the panel.
+**Displayed Photo** becomes unavailable for the whole capture or e-paper
+refresh. **Current Photo** still shows whatever is on the panel.
 
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
@@ -97,32 +97,16 @@ device **Inky** with:
   currently on the panel (a new capture, or an older stored photo chosen
   below). The entity_id stays `image.inky_latest_photo` so existing
   automations keep working.
-- One diagnostic image entity per stored photo (`image.inky_photo_<timestamp>`),
-  named with the capture timestamp, so dashboards can show the pictures
-  themselves.
-- `sensor.inky_photo_library` and `binary_sensor.inky_photo_busy`, used by the
-  photo grid card.
+- `select.inky_displayed_photo`, named **Inky Displayed Photo**, listing stored
+  photos newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`). Choosing
+  one shows it on the panel.
 
-Home Assistant MQTT selects can only show text, so there is no timestamp
-dropdown. Copy `dashboard/inky-photos-card.js` to Home Assistant
-`/config/www/inky-photos-card.js`, then add a Lovelace resource:
-
-- URL: `/local/inky-photos-card.js`
-- Type: JavaScript module
-
-Put the grid on a dashboard:
-
-```yaml
-type: custom:inky-photos-card
-```
-
-Optional card options: `title`, `library` (default `sensor.inky_photo_library`),
-`busy` (default `binary_sensor.inky_photo_busy`), and `command_topic` (default
-`inky/photo/select`).
+Home Assistant MQTT selects can only show text, not thumbnails, so the picker
+on the Inky device is a timestamp dropdown. There is no extra Lovelace card.
 
 The device publishes online/offline availability and its actual light state.
 MQTT light commands remain active while the e-paper display refreshes. The
-photo grid does not: tapping another photo is ignored until the capture or
+photo select does not: Home Assistant greys it out until the capture or
 refresh finishes.
 
 Light commands fade over one second by default, including ordinary dashboard
@@ -140,14 +124,15 @@ data:
 
 Use `light.turn_off` with the same `transition` field for a smooth fade out.
 
-To show an older photo from an automation, publish its stored PNG filename
-(`1725892923.png`):
+To show an older photo from an automation, choose its timestamp or stored PNG
+filename (`1725892923.png`):
 
 ```yaml
-action: mqtt.publish
+action: select.select_option
+target:
+  entity_id: select.inky_displayed_photo
 data:
-  topic: inky/photo/select
-  payload: "1725892923.png"
+  option: "2026-09-09 14:22:03"
 ```
 
 PWM stays at a fixed frequency. Home Assistant off is always true 0% duty, and
@@ -246,7 +231,7 @@ and blocks until the refresh is complete.
 - `CAMERA_EXPOSURE_VALUE=0.0` (negative darkens if shots are still too bright)
 - `CAMERA_AE_SETTLE_SECONDS=0.5` (wait after the capture light turns on)
 - `INKY_SATURATION=0.5`
-- `INKY_PHOTO_SELECT_LIMIT=100` (newest stored photos shown in the Home Assistant photo grid)
+- `INKY_PHOTO_SELECT_LIMIT=100` (newest stored photos listed in Home Assistant)
 - `MQTT_HOST=homeassistant.local` (unset disables MQTT)
 - `MQTT_PORT=1883`
 - `MQTT_USERNAME=inky`

@@ -17,13 +17,14 @@ on an Inky Impression 7.3 Spectra (800×480).
    when that setting is off).
 
 Home Assistant can also show a previously taken photo stored on Inky. **Current
-Photo** is the picture of whatever is on the panel. **Stored Photos** is a
-timestamp dropdown of older shots (newest first). Choosing one shows it on the
-e-paper. That path skips the camera, but still uses the busy breathing light
-and ignores the capture button until the refresh finishes.
+Photo** is a sensor with the timestamp of the photo on the panel, or the photo
+it is switching to. **Photo** is a dropdown of stored shots (newest first).
+Choosing one shows it on the e-paper. That path skips the camera, but still
+uses the busy breathing light and ignores the capture button until the refresh
+finishes.
 
-**Stored Photos** becomes unavailable for the whole capture or e-paper refresh.
-**Current Photo** still shows whatever is on the panel.
+**Photo Busy** turns on for the whole capture or e-paper refresh. The light and
+photo dropdown become unavailable until that finishes.
 
 Button activity is ignored from the start of capture through the end of the
 display refresh. A press that begins during this time remains invalid even if
@@ -89,26 +90,21 @@ local capture continues normally. Capture and display also continue if the
 broker is unreachable, credentials are wrong, or the MQTT package is missing.
 
 Inky publishes retained MQTT Discovery configurations. Home Assistant creates
-device **Inky** with:
+device **Inky** with only:
 
+- `sensor.inky_current_photo`, named **Inky Current Photo**, for the capture
+  timestamp on the panel, or the stored photo currently switching onto it.
 - `light.inky_light`, named **Inky Light**, for independent on/off and
   brightness control.
-- `image.inky_latest_photo`, named **Inky Current Photo**, for the 800×480 PNG
-  currently on the panel (a new capture, or an older stored photo chosen
-  below). The entity_id stays `image.inky_latest_photo` so existing
-  automations keep working.
-- `select.inky_displayed_photo`, named **Inky Stored Photos**, listing stored
-  photos newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`). This is the
-  picker, not a second picture. Choosing one shows it on the panel.
+- `select.inky_displayed_photo`, named **Inky Photo**, listing stored photos
+  newest first by capture timestamp (`YYYY-MM-DD HH:MM:SS`).
+- `binary_sensor.inky_photo_busy`, named **Inky Photo Busy**, a diagnostic that
+  is on while a capture or e-paper refresh is in progress.
 
-Home Assistant cannot put a picture and a dropdown in one MQTT entity, so the
-device has both: the image, and the timestamp select. There is no extra
-Lovelace card.
-
-The device publishes online/offline availability and its actual light state.
-MQTT light commands remain active while the e-paper display refreshes. The
-photo select does not: Home Assistant greys it out until the capture or
-refresh finishes.
+The device publishes online/offline availability. The light and photo dropdown
+are also unavailable while **Photo Busy** is on, so Home Assistant greys them
+out until the capture or refresh finishes. Current Photo and Photo Busy stay
+available so you can see the target shot and that Inky is working.
 
 Light commands fade over one second by default, including ordinary dashboard
 toggle and brightness changes. Home Assistant can override that duration per
@@ -143,52 +139,23 @@ uses 20% physical duty, then scales linearly to 100% duty at 100% brightness.
 Change `LIGHT_MINIMUM_DUTY` if the hardware needs a different lower bound for
 on states only.
 
-Home Assistant does not retain previous MQTT image payloads automatically. To
-save each new camera capture into local media and notify your phone, create
-`/media/inky` on the Home Assistant host and add this automation:
+`inky/photo/captured` is published only for live camera captures. The payload
+is the PNG filename already stored on Inky. Originals remain in Inky's local
+`images/` directory. To notify your phone when a new shot is taken:
 
 ```yaml
-alias: Archive and notify Inky photos
+alias: Notify Inky photos
 triggers:
   - trigger: mqtt
     topic: inky/photo/captured
-variables:
-  filename: "{{ trigger.payload }}"
 actions:
-  - delay: "00:00:01"
-  - action: image.snapshot
-    target:
-      entity_id: image.inky_latest_photo
-    data:
-      filename: "/media/inky/{{ filename }}"
   - action: notify.mobile_app_andrews_iphone
     data:
       title: "New Inky photo"
-      message: "A new photo was captured."
+      message: "{{ trigger.payload }}"
       data:
-        image: "/media/local/inky/{{ filename }}"
-        entity_id: image.inky_latest_photo
+        entity_id: sensor.inky_current_photo
 mode: queued
-```
-
-`inky/photo/captured` is published only for live camera captures (not for
-reconnect republishes of the current photo). The payload is the PNG filename
-already stored on Inky, and the same `filename` variable is used for both the
-media archive and the notification attachment.
-
-On iPhone, tapping the notification opens the more-info panel for
-`image.inky_latest_photo` via Companion's `entity_id` field (do not use
-`url: entityId:...` — that is Android-only). To open a dashboard view instead,
-omit `entity_id` and set `url` to that view's path (for example
-`/lovelace/inky`).
-
-Archived copies appear under **Media → Local Media → inky**. The complete
-originals always remain in Inky's local `images/` directory. For a gallery
-directly on a dashboard, install Media Explorer Card through HACS and use:
-
-```yaml
-type: custom:media-explorer-card
-startPath: media-source://media_source/local/inky
 ```
 
 ## Image conversion

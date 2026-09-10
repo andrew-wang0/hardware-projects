@@ -38,8 +38,11 @@ if home_assistant_module.mqtt is not None:
 
 
 class FakeLight:
-    def set(self, **_kwargs) -> None:
-        return None
+    def __init__(self) -> None:
+        self.commands: list[dict] = []
+
+    def set(self, **kwargs) -> None:
+        self.commands.append(kwargs)
 
     def state(self) -> tuple[bool, float]:
         return False, 0.0
@@ -118,7 +121,7 @@ def make_config(image_dir: Path, limit: int = 100) -> Config:
     )
 
 
-class HomeAssistantSelectTests(unittest.TestCase):
+class HomeAssistantDeviceTests(unittest.TestCase):
     def setUp(self) -> None:
         self._temp = tempfile.TemporaryDirectory()
         self.image_dir = Path(self._temp.name)
@@ -129,7 +132,8 @@ class HomeAssistantSelectTests(unittest.TestCase):
         os.utime(self.older, (1, 1))
         os.utime(self.newer, (2, 2))
         self.client = FakeClient()
-        self.ha = HomeAssistant(make_config(self.image_dir), FakeLight())
+        self.light = FakeLight()
+        self.ha = HomeAssistant(make_config(self.image_dir), self.light)
         self.ha._client = self.client
         self.queued: list[Path] = []
         self.ha.set_display_handler(self._queue)
@@ -149,68 +153,82 @@ class HomeAssistantSelectTests(unittest.TestCase):
             if published == topic
         ]
 
-    def test_discovery_lists_stored_photos_on_the_device(self) -> None:
-        configs = self._payloads("homeassistant/select/inky/displayed_photo/config")
-        self.assertTrue(configs)
-        payload = json.loads(configs[-1])
-        self.assertEqual(payload["name"], "Stored Photos")
-        self.assertEqual(payload["command_topic"], "inky/photo/select")
+    def _config(self, component: str, entity: str) -> dict:
+        payload = self._payloads(
+            f"homeassistant/{component}/inky/{entity}/config"
+        )[-1]
+        if payload is None:
+            return {}
+        return json.loads(payload)
+
+    def test_device_has_only_the_requested_entities(self) -> None:
+        light = self._config("light", "light")
+        self.assertEqual(light["name"], "Light")
+        self.assertEqual(light["availability_mode"], "all")
         self.assertEqual(
-            payload["options"],
-            [photo_label(self.newer), photo_label(self.older)],
-        )
-        self.assertEqual(payload["availability_mode"], "all")
-        self.assertEqual(
-            payload["availability"][-1],
+            light["availability"][-1],
             {
                 "topic": "inky/photo/controls",
                 "payload_available": "idle",
                 "payload_not_available": "busy",
             },
         )
+
+        current = self._config("sensor", "current_photo")
+        self.assertEqual(current["name"], "Current Photo")
+        self.assertEqual(current["state_topic"], "inky/photo/displayed")
+        self.assertNotIn("availability_mode", current)
+
+        photo = self._config("select", "displayed_photo")
+        self.assertEqual(photo["name"], "Photo")
+        self.assertEqual(
+            photo["options"],
+            [photo_label(self.newer), photo_label(self.older)],
+        )
+        self.assertEqual(photo["availability_mode"], "all")
+
+        busy = self._config("binary_sensor", "photo_busy")
+        self.assertEqual(busy["name"], "Photo Busy")
+        self.assertEqual(busy["icon"], "mdi:image-sync")
+        self.assertEqual(busy["entity_category"], "diagnostic")
+        self.assertEqual(busy["payload_on"], "busy")
+        self.assertEqual(busy["payload_off"], "idle")
+        self.assertNotIn("availability_mode", busy)
+
         self.assertEqual(self._payloads("inky/photo/controls")[-1], "idle")
         self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
-        self.assertIn("inky/photo/select", self.client.subscribed)
-        self.assertNotIn("inky/photo/previous", self.client.subscribed)
-        self.assertNotIn("inky/photo/next", self.client.subscribed)
-
-        current = self._payloads("homeassistant/image/inky/latest_photo/config")
-        self.assertTrue(current)
-        self.assertEqual(json.loads(current[-1])["name"], "Current Photo")
-        self.assertEqual(self._payloads("inky/photo")[-1], b"new")
-
-        self.assertEqual(self._payloads("homeassistant/image/inky/photo_preview/config")[-1], None)
-        self.assertEqual(self._payloads("homeassistant/button/inky/previous_photo/config")[-1], None)
-        self.assertEqual(self._payloads("homeassistant/button/inky/next_photo/config")[-1], None)
+        self.assertEqual(self._payloads("homeassistant/image/inky/latest_photo/config")[-1], None)
         self.assertEqual(self._payloads("homeassistant/sensor/inky/photo_library/config")[-1], None)
-        self.assertEqual(self._payloads("homeassistant/binary_sensor/inky/photo_busy/config")[-1], None)
-        newer_id = photo_object_id(self.newer)
         self.assertEqual(
-            self._payloads(f"homeassistant/image/inky/{newer_id}/config")[-1],
+            self._payloads(f"homeassistant/image/inky/{photo_object_id(self.newer)}/config")[-1],
             None,
         )
 
-    def test_select_command_queues_stored_photo(self) -> None:
+    def test_select_updates_current_photo_then_goes_busy(self) -> None:
         self.client.published.clear()
         self.ha._handle_select_command(photo_label(self.older).encode())
 
         self.assertEqual(self.queued, [self.older])
-        self.assertEqual(self._payloads("inky/photo"), [])
+        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.older))
+        self.assertEqual(
+            json.loads(self._payloads("inky/photo/displayed_attrs")[-1])["filename"],
+            "1700000000.png",
+        )
         self.assertEqual(self._payloads("inky/photo/controls")[-1], "busy")
-        self.assertEqual(self._payloads("inky/photo/displayed"), [])
 
     def test_select_command_accepts_filename(self) -> None:
         self.ha._handle_select_command(b"1700000000.png")
 
         self.assertEqual(self.queued, [self.older])
 
-    def test_busy_controls_ignore_photo_changes(self) -> None:
+    def test_busy_controls_ignore_photo_and_light_changes(self) -> None:
         self.ha.set_photo_controls_busy()
         self.client.published.clear()
         self.ha._handle_select_command(photo_label(self.older).encode())
+        self.ha._handle_light_command(b'{"state": "ON", "brightness": 255}')
 
         self.assertEqual(self.queued, [])
-        self.assertEqual(self._payloads("inky/photo"), [])
+        self.assertEqual(self.light.commands, [])
         self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
 
     def test_rejected_queue_does_not_mark_busy(self) -> None:
@@ -234,20 +252,29 @@ class HomeAssistantSelectTests(unittest.TestCase):
 
         self.assertEqual(self.queued, [])
 
-    def test_showing_a_stored_photo_updates_current_photo(self) -> None:
+    def test_showing_a_stored_photo_clears_the_target(self) -> None:
+        self.ha._handle_select_command(photo_label(self.older).encode())
         self.client.published.clear()
         self.ha.show_stored_photo(self.older)
 
-        self.assertEqual(self._payloads("inky/photo")[-1], b"old")
+        self.assertIsNone(self.ha._target)
         self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.older))
 
-    def test_reconnect_republishes_the_displayed_photo(self) -> None:
+    def test_failed_show_reverts_current_photo(self) -> None:
+        self.ha._handle_select_command(photo_label(self.older).encode())
+        self.client.published.clear()
+        self.ha.publish_displayed_state()
+
+        self.assertIsNone(self.ha._target)
+        self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.newer))
+
+    def test_reconnect_republishes_the_current_photo_name(self) -> None:
         save_displayed(self.image_dir, self.older)
         self.client.published.clear()
         self.ha._on_connect(self.client, None, None, 0, None)
 
-        self.assertEqual(self._payloads("inky/photo")[-1], b"old")
         self.assertEqual(self._payloads("inky/photo/displayed")[-1], photo_label(self.older))
+        self.assertEqual(self._payloads("inky/photo")[-1], None)
 
 
 if __name__ == "__main__":

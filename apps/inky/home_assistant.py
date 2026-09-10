@@ -36,6 +36,7 @@ class HomeAssistant:
         self._last_connect_warning = 0.0
         self._on_show_photo: Callable[[Path], bool] | None = None
         self._displayed: Path | None = load_displayed(config.image_dir)
+        self._target: Path | None = None
         self._choices: list[PhotoChoice] = []
         self._published_options: list[str] | None = None
         self._photo_busy = False
@@ -82,13 +83,13 @@ class HomeAssistant:
             self._client = None
 
     def publish_photo(self, path: Path, *, announce: bool = True) -> None:
-        self._publish_image(path, "photo", "Could not update the current Home Assistant photo")
         if announce:
             self._publish_capture_event(path)
         self.set_displayed(path)
 
     def set_displayed(self, path: Path) -> None:
         self._displayed = path
+        self._target = None
         try:
             save_displayed(self._config.image_dir, path)
         except OSError:
@@ -96,20 +97,10 @@ class HomeAssistant:
         self._refresh_select()
 
     def show_stored_photo(self, path: Path) -> None:
-        self._publish_image(
-            path,
-            "photo",
-            "Could not update the current Home Assistant photo",
-        )
         self.set_displayed(path)
 
     def publish_displayed_state(self) -> None:
-        if self._displayed is not None:
-            self._publish_image(
-                self._displayed,
-                "photo",
-                "Could not update the current Home Assistant photo",
-            )
+        self._target = None
         self._refresh_select()
 
     def set_photo_controls_busy(self) -> None:
@@ -138,6 +129,9 @@ class HomeAssistant:
             finally:
                 self._client.loop_stop()
 
+    def _current_path(self) -> Path | None:
+        return self._target or self._displayed
+
     def _on_connect(self, client, _userdata, _flags, reason_code, _properties) -> None:
         if reason_code != 0:
             LOGGER.error("MQTT connection failed: %s", reason_code)
@@ -147,12 +141,12 @@ class HomeAssistant:
         client.subscribe(self._topic("light/set"), qos=1)
         client.subscribe(self._topic("photo/select"), qos=1)
         self._displayed = load_displayed(self._config.image_dir)
+        self._target = None
         self._published_options = None
+        self._publish_photo_controls()
         self._publish_discovery()
         client.publish(self._topic("status"), "online", qos=1, retain=True)
         self._publish_light_state()
-        self._publish_current_photo()
-        self._publish_photo_controls()
         LOGGER.info("Connected to Home Assistant MQTT at %s", self._mqtt.host)
 
     def _on_connect_fail(self, _client, _userdata) -> None:
@@ -180,6 +174,9 @@ class HomeAssistant:
             self._handle_select_command(message.payload)
 
     def _handle_light_command(self, payload: bytes) -> None:
+        if self._photo_busy:
+            LOGGER.info("Ignored light command while Inky is busy")
+            return
         try:
             command = json.loads(payload)
             if not isinstance(command, dict):
@@ -211,7 +208,7 @@ class HomeAssistant:
             option = payload.decode("utf-8").strip()
             path = resolve_photo_choice(option, self._choices, self._config.image_dir)
         except (UnicodeDecodeError, ValueError) as error:
-            LOGGER.warning("Ignored invalid displayed photo command: %s", error)
+            LOGGER.warning("Ignored invalid photo command: %s", error)
             self._refresh_select()
             return
         self._choose_photo(path)
@@ -221,13 +218,15 @@ class HomeAssistant:
             LOGGER.info("Ignored photo selection while Inky is busy")
             self._refresh_select()
             return
-        if self._displayed is not None and path == self._displayed:
+        if self._current_path() is not None and path == self._current_path():
             self._refresh_select()
             return
         if self._on_show_photo is None or not self._on_show_photo(path):
             LOGGER.info("Ignored photo selection while Inky is busy")
             self._refresh_select()
             return
+        self._target = path
+        self._refresh_select()
         self._set_photo_busy(True)
 
     def _publish_discovery(self) -> None:
@@ -235,7 +234,6 @@ class HomeAssistant:
         device = self._device()
         availability = self._availability()
         light = {
-            # Entity name is "Light"; HA prefixes the device name → "Inky Light".
             "name": "Light",
             "default_entity_id": f"light.{self._mqtt.device_id}_light",
             "unique_id": f"{self._mqtt.device_id}_light",
@@ -246,22 +244,33 @@ class HomeAssistant:
             "supported_color_modes": ["brightness"],
             "transition": True,
             "device": device,
+            **self._photo_control_availability(),
+        }
+        current_photo = {
+            "name": "Current Photo",
+            "default_entity_id": f"sensor.{self._mqtt.device_id}_current_photo",
+            "unique_id": f"{self._mqtt.device_id}_current_photo",
+            "state_topic": self._topic("photo/displayed"),
+            "json_attributes_topic": self._topic("photo/displayed_attrs"),
+            "icon": "mdi:image",
+            "device": device,
             **availability,
         }
-        image = {
-            # Entity name is "Current Photo"; HA prefixes the device name
-            # → "Inky Current Photo". unique_id stays latest_photo so existing
-            # image.inky_latest_photo entities keep their entity_id.
-            "name": "Current Photo",
-            "default_entity_id": f"image.{self._mqtt.device_id}_latest_photo",
-            "unique_id": f"{self._mqtt.device_id}_latest_photo",
-            "image_topic": self._topic("photo"),
-            "content_type": "image/png",
+        photo_busy = {
+            "name": "Photo Busy",
+            "default_entity_id": f"binary_sensor.{self._mqtt.device_id}_photo_busy",
+            "unique_id": f"{self._mqtt.device_id}_photo_busy",
+            "state_topic": self._topic("photo/controls"),
+            "payload_on": "busy",
+            "payload_off": "idle",
+            "entity_category": "diagnostic",
+            "icon": "mdi:image-sync",
             "device": device,
             **availability,
         }
         self._publish_config("light", "light", light)
-        self._publish_config("image", "latest_photo", image)
+        self._publish_config("sensor", "current_photo", current_photo)
+        self._publish_config("binary_sensor", "photo_busy", photo_busy)
         self._refresh_select()
         self._clear_obsolete_entities()
 
@@ -269,7 +278,7 @@ class HomeAssistant:
         self._choices = photo_choices(
             self._config.image_dir,
             self._config.photo_select_limit,
-            include=self._displayed,
+            include=self._current_path(),
         )
         if not self._connected or self._client is None:
             return
@@ -277,16 +286,15 @@ class HomeAssistant:
         if options != self._published_options:
             self._published_options = options
             self._publish_config("select", "displayed_photo", self._select_config())
-        self._publish_select_state()
+        self._publish_photo_state()
 
     def _select_config(self) -> dict:
         return {
-            "name": "Stored Photos",
+            "name": "Photo",
             "default_entity_id": f"select.{self._mqtt.device_id}_displayed_photo",
             "unique_id": f"{self._mqtt.device_id}_displayed_photo",
             "command_topic": self._topic("photo/select"),
             "state_topic": self._topic("photo/displayed"),
-            "json_attributes_topic": self._topic("photo/displayed_attrs"),
             "options": [choice.label for choice in self._choices],
             "icon": "mdi:image-album",
             "device": self._device(),
@@ -310,14 +318,15 @@ class HomeAssistant:
             "availability_mode": "all",
         }
 
-    def _publish_select_state(self) -> None:
+    def _publish_photo_state(self) -> None:
         if self._client is None:
             return
+        current = self._current_path()
         label = ""
         attrs: dict[str, str] = {}
-        if self._displayed is not None:
+        if current is not None:
             for choice in self._choices:
-                if choice.path.name == self._displayed.name:
+                if choice.path.name == current.name:
                     label = choice.label
                     attrs = {"filename": choice.path.name}
                     break
@@ -349,10 +358,10 @@ class HomeAssistant:
                 retain=True,
             )
         for component, entity in (
+            ("image", "latest_photo"),
             ("image", "photo_preview"),
             ("button", "previous_photo"),
             ("button", "next_photo"),
-            ("binary_sensor", "photo_busy"),
             ("sensor", "photo_library"),
             ("light", "show_light"),
             ("image", "archive_queue"),
@@ -361,6 +370,7 @@ class HomeAssistant:
         ):
             self._clear_discovery(component, entity)
         for suffix in (
+            "photo",
             "photo/preview",
             "photo/library",
             "photo/library_attrs",
@@ -417,41 +427,6 @@ class HomeAssistant:
             qos=1,
             retain=True,
         )
-
-    def _publish_current_photo(self) -> None:
-        path = self._displayed
-        if path is None or not path.is_file():
-            try:
-                path = max(
-                    (
-                        candidate
-                        for candidate in self._config.image_dir.glob("*.png")
-                        if candidate.is_file() and not candidate.name.startswith(".")
-                    ),
-                    key=lambda candidate: candidate.stat().st_mtime_ns,
-                )
-            except (OSError, ValueError):
-                return
-        self._publish_image(
-            path,
-            "photo",
-            "Could not update the current Home Assistant photo",
-        )
-
-    def _publish_image(self, path: Path, suffix: str, warning: str) -> None:
-        if not self._connected or self._client is None or mqtt is None:
-            return
-        try:
-            photo = self._client.publish(
-                self._topic(suffix),
-                path.read_bytes(),
-                qos=1,
-                retain=True,
-            )
-            if photo.rc != mqtt.MQTT_ERR_SUCCESS:
-                LOGGER.warning("%s", warning)
-        except (OSError, RuntimeError, ValueError):
-            LOGGER.warning("%s", warning)
 
     def _set_photo_busy(self, busy: bool) -> None:
         self._photo_busy = busy

@@ -1,0 +1,23 @@
+[Unit]
+Description=Home Assistant Cog Kiosk
+Wants=network-online.target
+After=network-online.target
+Conflicts=getty@tty1.service
+StartLimitIntervalSec=0
+
+[Service]
+User=__KIOSK_USER__
+RuntimeDirectory=ha-kiosk
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/ha-kiosk
+ExecStart=/usr/bin/cog --platform=drm --webprocess-failure=restart __HA_URL__
+Restart=always
+RestartSec=3
+StandardInput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

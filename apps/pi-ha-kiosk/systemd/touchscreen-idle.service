@@ -1,0 +1,18 @@
+[Unit]
+Description=Touchscreen Idle Backlight
+After=systemd-udev-trigger.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=__SCREEN_TIMEOUT__
+Environment=__BRIGHTNESS_PERCENT__
+Environment=__FADE_DURATION__
+Environment=__TOUCH_DEVICE__
+Environment=__BACKLIGHT_DEVICE__
+ExecStart=/usr/bin/python3 -u /usr/local/bin/touchscreen-idle.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

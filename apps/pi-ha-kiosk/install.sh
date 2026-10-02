@@ -22,7 +22,7 @@ STAGING_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$STAGING_DIR"' EXIT
 python3 "$APP_DIR/scripts/render-units.py" "$APP_DIR/systemd" "$STAGING_DIR"
 apt-get update
-apt-get install -y cog libgles2 libegl1 libgbm1 libgl1-mesa-dri python3 python3-evdev
+apt-get install -y cog libgles2 libegl1 libgbm1 libgl1-mesa-dri python3 python3-evdev kmod
 usermod -aG video,render,input "$KIOSK_USER"
 install -o root -g root -m 0755 "$APP_DIR/scripts/touchscreen-idle.py" /usr/local/bin/touchscreen-idle.py
 install -o root -g root -m 0644 "$STAGING_DIR/ha-kiosk.service" /etc/systemd/system/ha-kiosk.service

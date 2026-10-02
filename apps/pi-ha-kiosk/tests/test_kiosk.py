@@ -4,7 +4,7 @@ import unittest
 import os
 import pwd
 import tempfile
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from types import SimpleNamespace
 
 
@@ -19,6 +19,15 @@ idle = load('idle', 'touchscreen-idle.py')
 renderer = load('renderer', 'render-units.py')
 
 
+CODES = SimpleNamespace(EV_SYN=0, EV_KEY=1, EV_ABS=3, SYN_REPORT=0,
+                        SYN_DROPPED=3, BTN_TOUCH=330, ABS_MT_SLOT=47,
+                        ABS_MT_TRACKING_ID=57, ABS_MT_POSITION_X=53)
+
+
+def event(kind, code, value):
+    return SimpleNamespace(type=kind, code=code, value=value)
+
+
 class KioskTests(unittest.TestCase):
     def test_evdev_without_context_manager_and_cleanup(self):
         # Distribution evdev InputDevice supports close(), but not __enter__.
@@ -29,8 +38,14 @@ class KioskTests(unittest.TestCase):
                 self.closed = True
 
         device = Device()
+        device.grab = Mock()
+        device.capabilities = lambda: {1: [330]}
+        device.input_props = lambda: [1]
+        device.info = SimpleNamespace(vendor=1, product=2, version=1, bustype=3)
+        virtual = Mock()
         evdev = SimpleNamespace(InputDevice=lambda path: device,
-                                ecodes=SimpleNamespace(EV_KEY=1, EV_ABS=3))
+                                UInput=SimpleNamespace(from_device=Mock(return_value=virtual)),
+                                ecodes=CODES)
         with tempfile.TemporaryDirectory() as directory:
             backlight = Path(directory)
             (backlight / 'max_brightness').write_text('100')
@@ -44,7 +59,41 @@ class KioskTests(unittest.TestCase):
                     idle.main()
                 select_mock.assert_called_once()
             self.assertTrue(device.closed)
+            device.grab.assert_called_once()
+            virtual.close.assert_called_once()
             self.assertEqual((backlight / 'brightness').read_text(), '75')
+
+    def test_wake_gesture_suppressed_until_all_fingers_release(self):
+        relay = idle.TouchRelay(CODES)
+        sync = event(0, 0, 0)
+        # Coordinates/slot may arrive before the contact begins.
+        relay.feed(event(3, 47, 0), True)
+        relay.feed(event(3, 57, 100), False)
+        relay.feed(event(1, 330, 1), False)
+        self.assertEqual(relay.feed(sync, False), [])
+        relay.feed(event(3, 47, 1), False)
+        relay.feed(event(3, 57, 101), False)
+        self.assertEqual(relay.feed(sync, False), [])
+        relay.feed(event(3, 47, 0), False)
+        relay.feed(event(3, 57, -1), False)
+        self.assertEqual(relay.feed(sync, False), [])
+        self.assertTrue(relay.suppress)
+        relay.feed(event(3, 47, 1), False)
+        relay.feed(event(3, 57, -1), False)
+        relay.feed(event(1, 330, 0), False)
+        self.assertEqual(relay.feed(sync, False), [])
+        self.assertFalse(relay.suppress)
+        down = event(1, 330, 1)
+        relay.feed(down, False)
+        forwarded = relay.feed(sync, False)
+        self.assertEqual(forwarded[-2:], [down, sync])
+        up = event(1, 330, 0)
+        relay.feed(up, False)
+        self.assertEqual(relay.feed(sync, False), [up, sync])
+
+    def test_overflow_restarts_instead_of_forwarding_partial_gesture(self):
+        with self.assertRaises(RuntimeError):
+            idle.TouchRelay(CODES).feed(event(0, 3, 0), False)
 
     def test_fade_and_immediate_wake(self):
         state = idle.IdleState(10, 1.5, 100, 0)

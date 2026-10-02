@@ -1,10 +1,13 @@
 [Unit]
 Description=Touchscreen Idle Backlight
 After=systemd-udev-trigger.service
+Wants=ha-kiosk.service
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+ExecStartPre=/usr/sbin/modprobe uinput
 Environment=__SCREEN_TIMEOUT__
 Environment=__BRIGHTNESS_PERCENT__
 Environment=__FADE_DURATION__

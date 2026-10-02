@@ -6,8 +6,15 @@ fullscreen directly on DRM/KMS without a desktop, X11, Chromium or HACS.
 Home Assistant runs on a separate LAN server. Its header/sidebar may remain visible.
 
 The backlight starts at 75%, fades to zero after 10 seconds, and wakes immediately
-on touch, including during the fade. The first wake touch also reaches Home
-Assistant. Input is never grabbed or forwarded through uinput.
+on touch, including during the fade. The entire wake gesture is consumed: it does
+not tap a Home Assistant control. The next gesture works normally. Holding a
+finger on the screen keeps it awake.
+
+The daemon grabs the physical touchscreen once and forwards normal gestures
+through a virtual `uinput` touchscreen. It never cycles grab/ungrab when sleeping.
+It supports BTN_TOUCH single-touch and type-B multitouch; type-A multitouch is
+rejected. Cog starts only after the relay is ready and stops if the relay fails.
+This relay needs repeated sleep/wake and multitouch validation on the actual Pi.
 
 ## Initial setup
 
@@ -78,7 +85,7 @@ backlight devices. Package DRM support must be confirmed on the target OS releas
 Cog runs as your configured user. systemd creates `/run/ha-kiosk` with mode 0700
 and the user's ownership, so no UID 1000 or interactive login is required. It uses
 tty1; serial console and SSH remain available. The idle daemon runs as root to
-read input and write sysfs brightness. Both services restart after failures.
+read input, create a virtual touchscreen and write sysfs brightness. Both services restart after failures.
 
 ## Optional Home Assistant trusted login
 
@@ -123,7 +130,9 @@ sudo journalctl -u ha-kiosk.service -f
 
 Both kiosk services should be active; tty1 getty should be disabled. Verify the
 actual dashboard, normal touch, configured brightness, fade after timeout,
-instant wake and many repeated sleep/wake cycles. Check SSH and Wi-Fi after
+instant wake and many repeated sleep/wake cycles. Wake by touching a harmless
+control: the first gesture must not activate it, while the second should. Also
+test a held finger and multiple fingers; no release event should leak through. Check SSH and Wi-Fi after
 reboot. These hardware checks cannot be replaced by local syntax tests.
 
 To change settings, edit `config`, re-run `sudo ./install.sh` and reboot. To update,
@@ -147,8 +156,8 @@ Cog browser profile data in the user's home is retained.
   `sudo apt install evtest` and `sudo evtest`, then update `TOUCH_DEVICE`.
 - **Backlight does not sleep:** inspect the daemon journal and
   `cat /sys/class/backlight/*/{brightness,max_brightness}`. If touch fails,
-  stop the observer with `sudo systemctl stop touchscreen-idle.service` to isolate
-  the fault. The daemon restores awake brightness when stopped normally.
+  stop the relay with `sudo systemctl stop touchscreen-idle.service` to isolate
+  the fault (this also stops Cog). The daemon restores awake brightness when stopped normally.
 - **Wi-Fi compatibility:** for an older Pi chipset, try router settings with
   2.4 GHz, WPA2-PSK AES, 20 MHz width, channel 1/6/11. For diagnosis try PMF
   optional, disabling fast roaming/802.11r, MBO/OCE and newer Wi-Fi 6/7 features.

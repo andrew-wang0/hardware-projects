@@ -5,6 +5,7 @@ import os
 import pwd
 import tempfile
 from unittest.mock import patch
+from types import SimpleNamespace
 
 
 def load(name, filename):
@@ -19,6 +20,32 @@ renderer = load('renderer', 'render-units.py')
 
 
 class KioskTests(unittest.TestCase):
+    def test_evdev_without_context_manager_and_cleanup(self):
+        # Distribution evdev InputDevice supports close(), but not __enter__.
+        class Device:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        device = Device()
+        evdev = SimpleNamespace(InputDevice=lambda path: device,
+                                ecodes=SimpleNamespace(EV_KEY=1, EV_ABS=3))
+        with tempfile.TemporaryDirectory() as directory:
+            backlight = Path(directory)
+            (backlight / 'max_brightness').write_text('100')
+            (backlight / 'brightness').write_text('0')
+            with patch.dict('sys.modules', {'evdev': evdev}), \
+                 patch.dict(os.environ, {'BACKLIGHT_DEVICE': directory}, clear=True), \
+                 patch.object(idle.signal, 'signal'), \
+                 patch.object(idle.Path, 'iterdir', return_value=iter([backlight])), \
+                 patch.object(idle.select, 'select', side_effect=SystemExit(0)) as select_mock:
+                with self.assertRaises(SystemExit):
+                    idle.main()
+                select_mock.assert_called_once()
+            self.assertTrue(device.closed)
+            self.assertEqual((backlight / 'brightness').read_text(), '75')
+
     def test_fade_and_immediate_wake(self):
         state = idle.IdleState(10, 1.5, 100, 0)
         self.assertEqual(state.level(9), 100)

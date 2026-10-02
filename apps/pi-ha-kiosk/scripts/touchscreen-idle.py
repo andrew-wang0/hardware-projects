@@ -70,23 +70,26 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    with InputDevice(os.environ.get('TOUCH_DEVICE',
-                     '/dev/input/by-path/platform-3f205000.i2c-event')) as touch:
+    touch = InputDevice(os.environ.get('TOUCH_DEVICE',
+                        '/dev/input/by-path/platform-3f205000.i2c-event'))
+    try:
+        write(normal)
+        while True:
+            now = time.monotonic()
+            write(state.level(now))
+            readable, _, _ = select.select([touch], [], [], state.wait(now))
+            if readable:
+                activity = any(event.type in (ecodes.EV_KEY, ecodes.EV_ABS)
+                               for event in touch.read())
+                if activity:
+                    state.touch(time.monotonic())
+                    write(normal)
+    finally:
         try:
-            write(normal)
-            while True:
-                now = time.monotonic()
-                write(state.level(now))
-                readable, _, _ = select.select([touch], [], [], state.wait(now))
-                if readable:
-                    activity = any(event.type in (ecodes.EV_KEY, ecodes.EV_ABS)
-                                   for event in touch.read())
-                    if activity:
-                        state.touch(time.monotonic())
-                        write(normal)
-        finally:
             # Leave the console visible after stopping or a device failure.
             write(normal)
+        finally:
+            touch.close()
 
 
 if __name__ == '__main__':
